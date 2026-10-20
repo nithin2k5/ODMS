@@ -156,3 +156,11 @@ def test_reference_round_trips_through_json(tmp_path):
                                    .planes["default"].reference)
     assert ref.mode == "live" and ref.diameter_mm == REF_D
     assert MeasurementSpec.from_dict(ref.spec).r_outer == pytest.approx(REF_D / 2 * PPM + 12)
+
+
+def test_live_mode_handles_sudden_jump():
+    # No gradual tracking: the reference has moved ~12 px since it was defined.
+    out = run(MeasurementEngine(), frame(RAISE), calibration("live"))
+    assert out.references[0].ok
+    assert out.references[0].deviation == pytest.approx(RAISE - 1, abs=0.002)
+    assert out.results[0].diameter_mm == pytest.approx(90.0, abs=0.1)

@@ -209,8 +209,18 @@ class MeasurementEngine:
             spec.r_inner = max(track.radius_view - half, 0.0)
             spec.r_outer = track.radius_view + half
         spec.name = f"Scale reference [{plane.name}]"
-        r = self.measure_spec(gray, spec, config, resolution, smooth=False,
-                              uid=REFERENCE_UID + plane.plane_id)
+        uid = REFERENCE_UID + plane.plane_id
+        r = self.measure_spec(gray, spec, config, resolution, smooth=False, uid=uid)
+        if r.detected and r.center_view is not None and r.outline_view is not None:
+            # Second pass with the band centred on the first fit, so a sudden
+            # jump of the reference cannot leave part of its edge outside the
+            # band and bias the scale.
+            half = max((base.r_outer - base.r_inner) / 2.0, 3.0)
+            c = np.array(r.center_view)
+            rad = float(np.mean(np.hypot(*(r.outline_view - c).T)))
+            spec.center = (float(c[0]), float(c[1]))
+            spec.r_inner, spec.r_outer = max(rad - half, 0.0), rad + half
+            r = self.measure_spec(gray, spec, config, resolution, smooth=False, uid=uid)
         r.is_reference = True
         out = ReferenceResult(plane=plane.name, mode=mode, ok=False,
                               diameter_mm=ref.diameter_mm, result=r)
