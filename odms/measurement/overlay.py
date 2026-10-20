@@ -13,6 +13,7 @@ RED = (40, 40, 230)
 ORANGE = (0, 150, 255)
 YELLOW = (0, 220, 240)
 CYAN = (230, 210, 0)
+MAGENTA = (220, 60, 220)
 GREY = (170, 170, 170)
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -32,6 +33,8 @@ def _pt(p) -> tuple[int, int]:
 def status_colour(result: SpecResult) -> tuple[int, int, int]:
     if result.is_draft:
         return CYAN
+    if result.is_reference:
+        return MAGENTA if result.diameter_mm is not None else RED
     return {
         Status.PASS: GREEN,
         Status.MEASURED: GREEN,
@@ -45,6 +48,11 @@ def status_colour(result: SpecResult) -> tuple[int, int, int]:
 
 
 def label_text(result: SpecResult, unit: str = DEFAULT_UNIT) -> str:
+    if result.is_reference:
+        if result.diameter_mm is not None:
+            return f"{result.name}: {format_length(result.diameter_mm, unit)} " \
+                   f"{result.reference_note}"
+        return f"{result.name}: {result.reference_note or result.status.value}"
     prefix = "[setup] " if result.is_draft else ""
     if result.status in (Status.NOT_DETECTED, Status.INCOMPLETE):
         return f"{prefix}{result.name}: {result.status.value}"
@@ -84,7 +92,8 @@ def draw_results(image: np.ndarray, results: list[SpecResult],
 
         # Search band (dashed look via thin lines) is always shown for the
         # draft and for anything that is not cleanly measured.
-        if res.band_outer_view is not None and (res.is_draft or not res.accepted):
+        if res.band_outer_view is not None and (res.is_draft or res.is_reference
+                                                or not res.accepted):
             for band in (res.band_inner_view, res.band_outer_view):
                 if band is not None and len(band) > 2:
                     cv2.polylines(image, [_pts(band)], True, GREY if not res.is_draft else colour,

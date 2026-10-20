@@ -20,7 +20,7 @@ CSV_FIELDS = [
     "units", "display_unit", "diameter_display", "min_display", "max_display", "status", "reason", "min_mm", "max_mm", "detection_quality", "fit_rms_px",
     "inlier_ratio", "angular_coverage", "max_gap_deg", "edge_width_px", "rays_with_edge",
     "smoothing_samples", "measurement_space", "calibration_id", "plane_calibration_id",
-    "calibration_state", "px_per_mm", "lens_applied", "camera_id", "resolution",
+    "calibration_state", "scale_reference", "px_per_mm", "lens_applied", "camera_id", "resolution",
     "annotated_image", "raw_image",
 ]
 
@@ -86,7 +86,9 @@ def result_row(r: SpecResult, frame: FrameResult, profile_name: str,
         "calibration_id": calibration.calibration_id if calibration else "",
         "plane_calibration_id": plane.plane_id if plane else "",
         "calibration_state": r.calibration_state,
-        "px_per_mm": _fmt(plane.px_per_mm, 6) if plane else "",
+        "scale_reference": r.reference_note,
+        "px_per_mm": (_fmt(r.px_per_mm, 6) if r.px_per_mm is not None
+                      else (_fmt(plane.px_per_mm, 6) if plane else "")),
         "lens_applied": "yes" if frame.lens_applied else "no",
         "camera_id": frame.camera_id,
         "resolution": f"{frame.resolution[0]}x{frame.resolution[1]}",
