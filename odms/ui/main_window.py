@@ -80,6 +80,7 @@ class MainWindow:
         self._version = 0
         self._configs: dict[int, EngineConfig] = {}
         self._fields_job = None
+        self._stale = False
 
         self._build_ui()
         self._load_last_calibration()
@@ -260,6 +261,7 @@ class MainWindow:
         if latest is not None:
             first = self.latest is None or self.latest.resolution != latest.resolution
             self.latest = latest
+            self._stale = False
             self.canvas.set_image(latest.annotated)
             self.results_panel.update_results(latest.results)
             self._update_draft_status(latest.draft_result)
@@ -278,6 +280,13 @@ class MainWindow:
             elif st.message:
                 text += f" - {st.message}"
             self.cam_status_var.set(text)
+            if (self.source_mode == "camera" and st.state is not CameraState.RUNNING
+                    and self.latest is not None and not self._stale):
+                # Never leave old readings on screen as if they were current.
+                self._stale = True
+                self.results_panel.update_results([])
+                self.set_status("Camera not delivering frames - readings cleared. "
+                                + (st.message or ""))
         elif self.source_mode == "image":
             self.cam_status_var.set("Image file mode")
         else:
@@ -1097,6 +1106,11 @@ class MainWindow:
         frame = self.latest
         if frame is None:
             messagebox.showinfo("Save result", "No image to save.", parent=self.root)
+            return
+        if self._stale:
+            messagebox.showwarning("Save result", "The camera is not delivering frames; the "
+                                   "last readings are stale and were not saved.",
+                                   parent=self.root)
             return
         if not frame.results:
             messagebox.showinfo("Save result", "The profile has no measurements yet.",
