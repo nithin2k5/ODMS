@@ -35,8 +35,9 @@ def _fmt(value, digits: int = 4) -> str:
     return str(value)
 
 
-def imwrite(path: Path, image: np.ndarray) -> None:
+def imwrite(path: str | Path, image: np.ndarray) -> None:
     """``cv2.imwrite`` that also works with non-ASCII Windows paths."""
+    path = Path(path)
     ok, buf = cv2.imencode(path.suffix or ".png", image)
     if not ok:
         raise IOError(f"could not encode image for {path}")
