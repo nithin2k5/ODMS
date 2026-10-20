@@ -39,6 +39,7 @@ ODMS/
 │   │   ├── scale.py             straight-on reference-length scale, revalidation
 │   │   ├── perspective.py       homography / rectification for tilted planes
 │   │   ├── lens.py              checkerboard lens calibration, undistortion
+│   │   ├── reference.py         scale reference measured every frame
 │   │   └── store.py             JSON save/load (forces revalidation on load)
 │   ├── measurement/
 │   │   ├── models.py            MeasurementSpec, ProcessingParams, results
@@ -183,6 +184,47 @@ Measurements on a perspective plane are fitted in the rectified
 (perspective-corrected) image, where the boundary is a true circle. The overlay
 is mapped back onto the camera view.
 
+### Live scale reference (measured every frame)
+
+A normal lens's scale depends on the camera-to-part distance:
+`px_per_mm = f_px / Z`. If the camera is raised by 1 % of its working
+distance, every diameter reads about 1 % small, and ODMS cannot tell that from
+the image alone. A **scale reference** that stays in view fixes this.
+
+1. Place a circle of certified diameter in the field of view **on the measured
+   plane, at the same height as the measured boundaries**. A precision ring, a
+   disc, or a reamed hole in the fixture all work. It must stay in view and
+   unobstructed.
+2. Calibration tab ▸ choose the plane ▸ *Define reference circle*, then click on
+   the reference's edge (zoom in). Enter its certified diameter and choose a
+   mode:
+   * **Check**: every frame, the scale measured from the reference must agree
+     with the plane calibration within the tolerance (default 0.5 %). If the
+     camera height, zoom or focus changes, the plane shows *Reference check
+     failed* and only pixels are reported until you recalibrate. A passing
+     check also counts as continuous revalidation, so a calibration loaded
+     from disk gives millimetres again once the reference agrees.
+   * **Live scale** (straight-on planes only): the scale is taken from the
+     reference in every frame (`px_per_mm = reference_px / reference_mm`), so
+     height changes are compensated automatically. The live scale must stay
+     within *max drift* (default 10 %) of the original calibration; a larger
+     change usually means the reference was misdetected.
+3. If the plane is not calibrated yet, it is calibrated from the reference
+   circle itself. You can also tick *Calibrate the plane's scale from this
+   reference now*.
+
+The reference is drawn in magenta, or red when it fails, with its deviation
+from the calibrated scale. Its search band follows the circle when the camera
+drifts or its size changes. If the reference cannot be measured (covered,
+glare, out of view), millimetres on that plane are blocked. The planes table
+marks a live scale with `*`. The CSV `scale_reference` column records the
+reference status, and `px_per_mm` records the scale actually used.
+
+Limits: the reference only corrects what affects it and the part equally.
+Both must lie at the same height. The reference cannot correct tilt, lens
+distortion, or a part whose height differs from the reference's. Put the
+reference close to the part, so lens distortion affects both similarly.
+
 ### Validity and revalidation
 
 A plane's state appears in the planes table:
@@ -193,6 +235,7 @@ A plane's state appears in the planes table:
 | Revalidation required | loaded from disk, or *Setup changed* was pressed, or a revalidation failed | no (pixels) |
 | Invalid | different camera, different resolution, or the lens calibration changed | no (pixels) |
 | Missing | the measurement's plane has no calibration | no (pixels) |
+| Reference check failed | the plane's live scale reference is missing or disagrees with the calibration | no (pixels) |
 
 * Calibrations are stored with the camera identity (`usb:<index>`, or
   `image-file`), resolution, lens id and setup record. OpenCV exposes no

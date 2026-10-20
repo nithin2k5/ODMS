@@ -1,7 +1,6 @@
 """Live scale reference: camera height changes after calibration."""
 import functools
 
-import numpy as np
 import pytest
 
 from odms.calibration.models import CalibrationSet
