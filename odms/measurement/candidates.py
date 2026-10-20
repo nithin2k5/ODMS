@@ -29,9 +29,14 @@ def hough_candidates(image: np.ndarray, roi: tuple[int, int, int, int] | None = 
         if scale < 1.0 else gray
     small = cv2.GaussianBlur(small, (0, 0), 1.5)
     min_dim = min(small.shape[:2])
-    circles = cv2.HoughCircles(small, cv2.HOUGH_GRADIENT, dp=1.2, minDist=4,
-                               param1=100, param2=30, minRadius=6,
-                               maxRadius=int(0.75 * max(small.shape[:2])))
+    max_r = int(0.75 * max(small.shape[:2]))
+    if hasattr(cv2, "HOUGH_GRADIENT_ALT"):
+        # Small minDist keeps concentric rings, which share a centre.
+        circles = cv2.HoughCircles(small, cv2.HOUGH_GRADIENT_ALT, dp=1.5, minDist=3,
+                                   param1=150, param2=0.8, minRadius=5, maxRadius=max_r)
+    else:  # pragma: no cover - very old OpenCV
+        circles = cv2.HoughCircles(small, cv2.HOUGH_GRADIENT, dp=1.2, minDist=4,
+                                   param1=100, param2=30, minRadius=6, maxRadius=max_r)
     if circles is None:
         return []
     out = []
@@ -43,11 +48,14 @@ def hough_candidates(image: np.ndarray, roi: tuple[int, int, int, int] | None = 
 
 
 def nearest_candidate(candidates, point, tolerance: float | None = None):
-    """Candidate whose circumference passes closest to ``point``."""
-    best, best_d = None, math.inf
+    """Best-ranked candidate whose circumference passes near ``point``.
+
+    Candidates are in detector rank order, so the first one within tolerance
+    is preferred over a weaker one that happens to pass slightly closer.
+    """
     for cx, cy, r in candidates:
         d = abs(math.hypot(point[0] - cx, point[1] - cy) - r)
-        tol = tolerance if tolerance is not None else max(8.0, 0.05 * r)
-        if d <= tol and d < best_d:
-            best, best_d = (cx, cy, r), d
-    return best
+        tol = tolerance if tolerance is not None else max(6.0, 0.03 * r)
+        if d <= tol:
+            return cx, cy, r
+    return None
