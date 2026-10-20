@@ -27,6 +27,7 @@ from ..measurement.overlay import label_text
 from ..processing import ProcessingWorker, make_queues
 from ..storage.profiles import PartProfile, load_profile, save_profile
 from ..storage.results import ResultStore, imread, result_row
+from ..units import UNIT_NAMES, check_unit, format_length, to_mm
 from .calibration_panel import CalibrationPanel
 from .dialogs import FormDialog, LensCalibrationDialog, PerspectivePointsDialog, run_in_background
 from .measurement_panel import MeasurementPanel, ProcessingPanel
@@ -200,6 +201,12 @@ class MainWindow:
                                                                                     padx=2)
         ttk.Button(bar, text="Fit", width=4, command=lambda: self.canvas.reset_view()).pack(
             side="left", padx=(8, 2))
+        ttk.Label(bar, text="Unit").pack(side="left", padx=(12, 0))
+        self.unit_var = tk.StringVar(value="mm")
+        unit_box = ttk.Combobox(bar, textvariable=self.unit_var, values=UNIT_NAMES, width=5,
+                                state="readonly")
+        unit_box.pack(side="left", padx=4)
+        unit_box.bind("<<ComboboxSelected>>", lambda e: self.set_unit(self.unit_var.get()))
 
     def _show_help(self) -> None:
         messagebox.showinfo("Controls", (
@@ -219,11 +226,30 @@ class MainWindow:
         cfg = EngineConfig(specs=specs, draft=draft,
                            calibration=copy.deepcopy(self.calibration),
                            camera_id=self.source_id, show_edge_points=self.show_edge_points,
+                           unit=self.unit,
                            version=self._version)
         self._configs[self._version] = cfg
         for v in [v for v in self._configs if v < self._version - 20]:
             del self._configs[v]
         self.worker.set_config(cfg)
+
+    @property
+    def unit(self) -> str:
+        return self.profile.unit
+
+    def set_unit(self, unit: str) -> None:
+        """Change the display/entry unit (stored with the part profile)."""
+        unit = check_unit(unit)
+        if self.draft is not None:
+            self.measure_panel.read_into(self.draft)  # keep typed limits in mm
+        self.profile.unit = unit
+        self.unit_var.set(unit)
+        self.results_panel.set_unit(unit)
+        self.measure_panel.set_unit(unit, self.draft)
+        self.refresh_all()
+        if self.latest is not None:
+            self.results_panel.update_results(self.latest.results)
+        self.push_config()
 
     def config_for(self, frame: FrameResult) -> EngineConfig | None:
         return self._configs.get(frame.config_version)
@@ -303,7 +329,7 @@ class MainWindow:
         if r is None:
             self.measure_panel.set_draft_status("Waiting for an image...")
             return
-        text = label_text(r)
+        text = label_text(r, self.unit)
         if r.detected:
             q = r.quality
             text += (f"\nDetection quality {q.score:.0f}/100: coverage {q.coverage:.0%}, "
@@ -756,7 +782,7 @@ class MainWindow:
                 "New profile", "Discard the current profile's unsaved changes?",
                 parent=self.root):
             return
-        self.profile = PartProfile()
+        self.profile = PartProfile(unit=self.unit)
         self.profile_path = None
         self.cancel_draft()
         self.refresh_all()
@@ -775,7 +801,7 @@ class MainWindow:
         self.profile = profile
         self.profile_path = Path(path)
         self.cancel_draft()
-        self.refresh_all()
+        self.set_unit(profile.unit)
         warn = []
         cal = self.calibration
         lens_id = cal.lens.lens_id if cal and cal.lens else None
@@ -872,11 +898,12 @@ class MainWindow:
         name = self.cal_panel.target_plane
         length = simpledialog.askfloat(
             "Reference length", f"Marked distance: {distance(p1, p2):.2f} px\n\n"
-            f"Actual length of the reference on plane '{name}' (mm):",
-            parent=self.root, minvalue=1e-6)
+            f"Actual length of the reference on plane '{name}' ({self.unit}):",
+            parent=self.root, minvalue=1e-9)
         if length is None:
             self.set_status("Scale calibration cancelled.")
             return
+        length = to_mm(length, self.unit)
         try:
             plane = make_scale_plane(name, p1, p2, length, self._lens_id(cal),
                                      self.cal_panel.setup_info())
@@ -907,10 +934,11 @@ class MainWindow:
             return
         pts = list(self.mode_points)
         self.end_mode()
-        world = PerspectivePointsDialog(self.root, pts).show()
+        world = PerspectivePointsDialog(self.root, pts, unit=self.unit).show()
         if world is None:
             self.set_status("Perspective calibration cancelled.")
             return
+        world = [(to_mm(x, self.unit), to_mm(y, self.unit)) for x, y in world]
         self._apply_perspective(pts, world, "marked points")
 
     def _apply_perspective(self, image_pts, world_pts, source: str) -> None:
@@ -927,7 +955,8 @@ class MainWindow:
         n = len(image_pts)
         fit_note = ("exactly determined by 4 points - no redundancy to check the marking; "
                     "use more points if possible" if n == 4 else
-                    f"reference fit RMS {plane.reprojection_rms_mm:.3f} mm over {n} points")
+                    "reference fit RMS "
+                    f"{format_length(plane.reprojection_rms_mm, self.unit)} over {n} points")
         if not messagebox.askyesno(
                 "Perspective calibration",
                 f"Plane '{name}' from {source}: rectified scale {plane.px_per_mm:.4f} px/mm, "
@@ -946,7 +975,7 @@ class MainWindow:
         form = FormDialog(self.root, "Perspective from checkerboard", [
             ("cols", "Inner corners (columns)", 9, int),
             ("rows", "Inner corners (rows)", 6, int),
-            ("square", "Square size (mm)", 25.0, float)],
+            ("square", f"Square size ({self.unit})", 25.0, float)],
             message="Lay a flat checkerboard ON the measured plane (same height as the "
                     "boundaries to measure). Its corners define the plane coordinates.").show()
         if not form:
@@ -961,7 +990,7 @@ class MainWindow:
                                      "corner counts, focus and lighting.", parent=self.root)
                 self.set_status("Checkerboard not found.")
                 return
-            world = checkerboard_world_points(pattern, form["square"])
+            world = checkerboard_world_points(pattern, to_mm(form["square"], self.unit))
             self._apply_perspective(corners, world, f"checkerboard ({len(corners)} corners)")
 
         run_in_background(self.root, lambda: find_checkerboard(view, pattern), done)
@@ -971,7 +1000,7 @@ class MainWindow:
             messagebox.showinfo("Lens calibration", "Start a camera first.", parent=self.root)
             return
         LensCalibrationDialog(self.root, lambda: self.latest.raw if self.latest else None,
-                              self._apply_lens)
+                              self._apply_lens, unit=self.unit)
 
     def _apply_lens(self, lens: LensCalibration) -> None:
         cal = self._ensure_calset()
@@ -1024,14 +1053,16 @@ class MainWindow:
             return
         plane = cal.planes[name]
         length = simpledialog.askfloat(
-            "Revalidate", f"Known length of the marked reference on plane '{name}' (mm):",
-            parent=self.root, minvalue=1e-6)
+            "Revalidate", f"Known length of the marked reference on plane '{name}' "
+            f"({self.unit}):", parent=self.root, minvalue=1e-9)
         if length is None:
             return
+        length = to_mm(length, self.unit)
         tol = self.cal_panel.tolerance
         passed, measured, rel = revalidate_plane(plane, p1, p2, length, tol)
         self._calibration_changed(new_id=False)
-        text = (f"Reference {length:.4f} mm, measured {measured:.4f} mm, error {rel:+.3%} "
+        text = (f"Reference {format_length(length, self.unit)}, measured "
+                f"{format_length(measured, self.unit)}, error {rel:+.3%} "
                 f"(tolerance {tol:.2%}).")
         if passed:
             messagebox.showinfo("Revalidation passed", text + f"\n\nPlane '{name}' is valid.",
@@ -1116,12 +1147,15 @@ class MainWindow:
         cfg = self.config_for(frame)
         cal = cfg.calibration if cfg else self.calibration
         try:
-            rows, path = self.store.save_capture(frame, self.profile.name, cal)
+            rows, path = self.store.save_capture(frame, self.profile.name, cal, self.unit)
         except OSError as exc:
             messagebox.showerror("Save result", str(exc), parent=self.root)
             return
         self.results_panel.set_saved_count(len(self.store.session_rows))
-        summary = ", ".join(f"{r['measurement']}={r['diameter_mm'] or r['status']}" for r in rows)
+        summary = ", ".join(
+            f"{r['measurement']}="
+            + (f"{r['diameter_display']} {self.unit}" if r["diameter_display"] else r["status"])
+            for r in rows)
         self.set_status(f"Saved {path.name}: {summary}")
 
     def export_csv(self) -> None:
@@ -1138,7 +1172,7 @@ class MainWindow:
             cal = cfg.calibration if cfg else self.calibration
             from datetime import datetime
             ts = datetime.now().isoformat(timespec="milliseconds")
-            rows = [result_row(r, self.latest, self.profile.name, cal, ts)
+            rows = [result_row(r, self.latest, self.profile.name, cal, ts, unit=self.unit)
                     for r in self.latest.results]
         path = filedialog.asksaveasfilename(parent=self.root, title="Export CSV",
                                             defaultextension=".csv",

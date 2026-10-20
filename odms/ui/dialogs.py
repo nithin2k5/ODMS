@@ -12,6 +12,7 @@ import numpy as np
 from ..calibration.lens import RECOMMENDED_VIEWS, calibrate_lens, find_checkerboard
 from ..calibration.models import LensCalibration
 from ..storage.results import imread
+from ..units import to_mm
 
 
 def run_in_background(widget: tk.Misc, work: Callable[[], Any],
@@ -114,14 +115,14 @@ class PerspectivePointsDialog(_Modal):
     """Enter the real-world plane coordinates (mm) of each marked point."""
 
     def __init__(self, parent, image_points: list[tuple[float, float]],
-                 initial: list[tuple[float, float]] | None = None) -> None:
+                 initial: list[tuple[float, float]] | None = None, unit: str = "mm") -> None:
         super().__init__(parent, "Perspective reference coordinates")
         ttk.Label(self.body, wraplength=460, justify="left", text=(
-            "Enter the known position of every marked point on the measured plane, in "
-            "millimetres, in any planar coordinate system (e.g. corner 1 = 0,0). Points "
+            f"Enter the known position of every marked point on the measured plane, in {unit}, "
+            "in any planar coordinate system (e.g. corner 1 = 0,0). Points "
             "must lie on the same plane as the measured boundary and must not be collinear."
         )).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
-        for c, text in enumerate(("Point", "Image (px)", "X (mm)", "Y (mm)")):
+        for c, text in enumerate(("Point", "Image (px)", f"X ({unit})", f"Y ({unit})")):
             ttk.Label(self.body, text=text, font=("Segoe UI", 9, "bold")).grid(
                 row=1, column=c, sticky="w", padx=4)
         self._vars = []
@@ -151,10 +152,11 @@ class LensCalibrationDialog(tk.Toplevel):
     """Collect checkerboard views and compute a lens (distortion) calibration."""
 
     def __init__(self, parent, get_raw_frame: Callable[[], np.ndarray | None],
-                 on_apply: Callable[[LensCalibration], None]) -> None:
+                 on_apply: Callable[[LensCalibration], None], unit: str = "mm") -> None:
         super().__init__(parent)
         self.title("Lens calibration (checkerboard)")
         self.transient(parent.winfo_toplevel())
+        self.unit = unit
         self._get_frame = get_raw_frame
         self._on_apply = on_apply
         self._views: list[np.ndarray] = []
@@ -175,7 +177,7 @@ class LensCalibrationDialog(tk.Toplevel):
         self.square = tk.StringVar(value="25.0")
         for i, (label, var) in enumerate((("Inner corners (columns)", self.cols),
                                           ("Inner corners (rows)", self.rows),
-                                          ("Square size (mm)", self.square))):
+                                          (f"Square size ({unit})", self.square))):
             ttk.Label(f, text=label).grid(row=1 + i, column=0, sticky="w", pady=2)
             ttk.Entry(f, textvariable=var, width=10).grid(row=1 + i, column=1, sticky="w")
         bar = ttk.Frame(f)
@@ -197,7 +199,7 @@ class LensCalibrationDialog(tk.Toplevel):
     def _pattern(self) -> tuple[tuple[int, int], float] | None:
         try:
             pattern = (int(self.cols.get()), int(self.rows.get()))
-            square = float(self.square.get())
+            square = to_mm(float(self.square.get()), self.unit)
             if min(pattern) < 2 or square <= 0:
                 raise ValueError
             return pattern, square

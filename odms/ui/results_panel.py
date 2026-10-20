@@ -6,6 +6,7 @@ from tkinter import ttk
 from typing import Callable
 
 from ..measurement.models import SpecResult, Status
+from ..units import DEFAULT_UNIT, format_length
 
 COLUMNS = (
     ("measurement", "Measurement", 190),
@@ -60,6 +61,11 @@ class ResultsPanel(ttk.Frame):
         self.tree.tag_configure("rejected", background="#ffe7c7")
         self.tree.tag_configure("cal", background="#fff6c2")
         self._items: dict[str, str] = {}
+        self.unit = DEFAULT_UNIT
+
+    def set_unit(self, unit: str) -> None:
+        self.unit = unit
+        self.tree.heading("diameter", text=f"Diameter ({unit})")
 
     def set_saved_count(self, n: int) -> None:
         self.saved_var.set(f"Saved this session: {n}")
@@ -83,9 +89,9 @@ class ResultsPanel(ttk.Frame):
                     self.tree.delete(self._items[uid])
                 del self._items[uid]
 
-    @staticmethod
-    def _values(r: SpecResult) -> tuple[str, ...]:
-        mm = f"{r.diameter_mm:.3f}" if r.diameter_mm is not None else "-"
+    def _values(self, r: SpecResult) -> tuple[str, ...]:
+        unit = self.unit
+        value = format_length(r.diameter_mm, unit, with_unit=False)
         px = f"{r.diameter_px:.2f}" if r.diameter_px is not None else "-"
         if r.detected:
             q = r.quality
@@ -97,7 +103,7 @@ class ResultsPanel(ttk.Frame):
         if fit:
             detail = f"{fit}" + (f" | {r.reason}" if r.reason else "")
         if r.diameter_mm is not None and (r.min_mm is not None or r.max_mm is not None):
-            lo = f"{r.min_mm:.3f}" if r.min_mm is not None else "-inf"
-            hi = f"{r.max_mm:.3f}" if r.max_mm is not None else "+inf"
-            detail = f"limits [{lo}, {hi}] | " + detail
-        return (r.name, mm, px, quality, r.status.value, detail)
+            lo = format_length(r.min_mm, unit, False) if r.min_mm is not None else "-inf"
+            hi = format_length(r.max_mm, unit, False) if r.max_mm is not None else "+inf"
+            detail = f"limits [{lo}, {hi}] {unit} | " + detail
+        return (r.name, value, px, quality, r.status.value, detail)

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from ..measurement.models import POLARITIES, POLARITY_HELP, MeasurementSpec, ProcessingParams
 from ..storage.profiles import PartProfile
+from ..units import DEFAULT_UNIT, format_plain, to_mm
 
 if TYPE_CHECKING:  # pragma: no cover
     from .main_window import MainWindow
@@ -24,6 +25,7 @@ class MeasurementPanel(ttk.Frame):
         super().__init__(master, padding=8)
         self.app = app
         self._loading = False
+        self.unit = DEFAULT_UNIT
         self.columnconfigure(0, weight=1)
         b = dict(sticky="ew", padx=2, pady=2)
 
@@ -50,7 +52,7 @@ class MeasurementPanel(ttk.Frame):
         self.tree = ttk.Treeview(lst, columns=("plane", "limits"), height=5)
         self.tree.heading("#0", text="Name")
         self.tree.heading("plane", text="Plane")
-        self.tree.heading("limits", text="Limits (mm)")
+        self.tree.heading("limits", text=f"Limits ({self.unit})")
         self.tree.column("#0", width=200)
         self.tree.column("plane", width=80)
         self.tree.column("limits", width=110)
@@ -113,10 +115,12 @@ class MeasurementPanel(ttk.Frame):
         self.pol_help = tk.StringVar(value=POLARITY_HELP["auto"])
         ttk.Label(ed, textvariable=self.pol_help, foreground="#555", wraplength=330).grid(
             row=5, column=0, columnspan=4, sticky="w")
-        ttk.Label(ed, text="Min (mm)").grid(row=6, column=0, sticky="w")
+        self.min_label = ttk.Label(ed, text=f"Min ({self.unit})")
+        self.min_label.grid(row=6, column=0, sticky="w")
         ttk.Entry(ed, textvariable=self.min_var, width=10).grid(row=6, column=1, sticky="ew",
                                                                 padx=(6, 0))
-        ttk.Label(ed, text="Max (mm)").grid(row=6, column=2, sticky="w", padx=(6, 0))
+        self.max_label = ttk.Label(ed, text=f"Max ({self.unit})")
+        self.max_label.grid(row=6, column=2, sticky="w", padx=(6, 0))
         ttk.Entry(ed, textvariable=self.max_var, width=10).grid(row=6, column=3, sticky="ew",
                                                                 padx=(6, 0))
 
@@ -177,8 +181,8 @@ class MeasurementPanel(ttk.Frame):
                 self.r_in_var.set(f"{spec.r_inner:.1f}" if spec.r_outer else "")
                 self.r_out_var.set(f"{spec.r_outer:.1f}" if spec.r_outer else "")
                 self.pol_var.set(spec.params.polarity)
-                self.min_var.set("" if spec.min_mm is None else f"{spec.min_mm:g}")
-                self.max_var.set("" if spec.max_mm is None else f"{spec.max_mm:g}")
+                self.min_var.set(format_plain(spec.min_mm, self.unit))
+                self.max_var.set(format_plain(spec.max_mm, self.unit))
             self.pol_help.set(POLARITY_HELP.get(self.pol_var.get(), ""))
         finally:
             self._loading = False
@@ -198,13 +202,27 @@ class MeasurementPanel(ttk.Frame):
         spec.params.polarity = self.pol_var.get()
         for var, attr in ((self.min_var, "min_mm"), (self.max_var, "max_mm")):
             try:
-                setattr(spec, attr, _float_or_none(var.get()))
+                setattr(spec, attr, to_mm(_float_or_none(var.get()), self.unit))
             except ValueError:
                 problems.append(f"{attr} is not a number")
         if spec.min_mm is not None and spec.max_mm is not None and spec.min_mm > spec.max_mm:
             problems.append("min is greater than max")
         self.pol_help.set(POLARITY_HELP.get(spec.params.polarity, ""))
         return problems
+
+    def set_unit(self, unit: str, draft: MeasurementSpec | None) -> None:
+        """Change the unit of the limit fields, keeping the stored mm values."""
+        self.unit = unit
+        self.tree.heading("limits", text=f"Limits ({unit})")
+        self.min_label.configure(text=f"Min ({unit})")
+        self.max_label.configure(text=f"Max ({unit})")
+        if draft is not None:
+            self._loading = True
+            try:
+                self.min_var.set(format_plain(draft.min_mm, unit))
+                self.max_var.set(format_plain(draft.max_mm, unit))
+            finally:
+                self._loading = False
 
     def set_draft_status(self, text: str) -> None:
         self.draft_status.set(text)
@@ -228,8 +246,8 @@ class MeasurementPanel(ttk.Frame):
         sel = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
         for s in profile.specs:
-            lo = "-" if s.min_mm is None else f"{s.min_mm:g}"
-            hi = "-" if s.max_mm is None else f"{s.max_mm:g}"
+            lo = format_plain(s.min_mm, self.unit) or "-"
+            hi = format_plain(s.max_mm, self.unit) or "-"
             limits = "" if s.min_mm is None and s.max_mm is None else f"{lo} .. {hi}"
             self.tree.insert("", "end", iid=s.uid, text=s.name, values=(s.plane, limits))
         for iid in sel:
