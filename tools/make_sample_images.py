@@ -28,8 +28,7 @@ from odms.geometry import apply_homography  # noqa: E402
 from odms.measurement.models import MeasurementSpec  # noqa: E402
 from odms.storage.profiles import PartProfile, save_profile  # noqa: E402
 from odms.storage.results import imwrite  # noqa: E402
-from odms.synthetic import (fiducials_px, flange_scene, make_samples, render,  # noqa: E402
-                            straight_mapping)
+from odms.synthetic import fiducials_px, flange_scene, make_samples, render  # noqa: E402
 
 CAMERA_ID = "image-file"
 

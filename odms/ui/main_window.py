@@ -117,7 +117,7 @@ class MainWindow:
         self.measure_panel = MeasurementPanel(right, self)
         self.cal_panel = CalibrationPanel(right, self)
         self.proc_panel = ProcessingPanel(right, self)
-        right.add(self._scrollable(right, self.measure_panel), text="Measurements")
+        right.add(self.measure_panel, text="Measurements")
         right.add(self.cal_panel, text="Calibration")
         right.add(self.proc_panel, text="Processing")
 
@@ -138,10 +138,6 @@ class MainWindow:
         root.bind("<Escape>", lambda e: self.end_mode("Cancelled."))
         root.bind("<Control-s>", lambda e: self.save_result())
         root.bind("<F5>", lambda e: self.toggle_freeze())
-
-    def _scrollable(self, parent, inner: ttk.Frame) -> ttk.Frame:
-        # The measurement panel is tall; it stays usable on small screens.
-        return inner
 
     def _build_menu(self) -> None:
         m = tk.Menu(self.root)
@@ -534,7 +530,8 @@ class MainWindow:
         self._load_draft_into_panels()
         self.set_status("New measurement: draw an ROI (optional), set the centre (optional) "
                         "and pick the edge.")
-        self.begin_mode("roi") if self.latest is not None else None
+        if self.latest is not None:
+            self.begin_mode("roi")
 
     def edit_measurement(self, uid: str) -> None:
         spec = self.profile.spec_by_uid(uid)
