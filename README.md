@@ -156,6 +156,29 @@ Use this when the camera faces the measured plane squarely.
 
 `diameter_mm = diameter_px / px_per_mm`
 
+### Scale from camera distance (no reference object)
+
+*Calibration ▸ Scale: camera distance…* uses the pinhole model:
+
+```
+px_per_mm = focal_length_px / distance_mm
+```
+
+* **Distance:** from the lens's optical centre to the measured surface. On a
+  phone that is roughly the lens on the back surface, not the camera body or
+  case. The camera must face the surface squarely.
+* **Focal length**, from the most to the least accurate:
+  1. The **lens calibration** (checkerboard), if there is one.
+  2. The **35 mm-equivalent focal length**. Phones show this in a photo's
+     details (e.g. "26 mm"), and ODMS reads it from JPEG EXIF data when it is
+     present. It is only valid for the full, uncropped photo; resizing is fine.
+  3. A focal length in pixels that you already know.
+
+Every 1 % error in the distance is a 1 % error in every diameter.
+35 mm-equivalent values are rounded and can be several percent off, so treat
+this method as an estimate. Revalidate with a part of known size whenever you
+can. Each surface height is a different distance, so it needs its own plane.
+
 ### Lens distortion (checkerboard)
 
 Use *Lens: checkerboard…* to correct radial and tangential distortion. Enter the
@@ -280,6 +303,22 @@ For each measurement (**Measurements ▸ Add**):
 Mouse positions are converted from the scaled, letterboxed and zoomed preview
 back to original image pixels. Overlays are drawn at full resolution, so zooming
 in shows the true sub-pixel fit.
+
+### Automatic ring detection
+
+*Measurements ▸ Auto-detect rings…* finds every well-defined circular boundary
+in the image. If you have zoomed in, it searches only the visible area. Each
+proposal must pass the same robust edge fit and quality checks as a normal
+measurement. The dialog lists the rings largest first, with diameter
+(millimetres too when the plane is calibrated), quality and edge polarity.
+Concentric rings share a part number. Tick rings to highlight them in the
+preview, then press *Add selected*. They become measurements named
+`Ring 1`, `Ring 2`, …, each locked to its fitted ring. Rename them with
+*Edit*.
+
+Detection only proposes rings. Choosing which ones matter is still your
+decision, because a photo can contain chamfers, shadows, bolt holes and
+neighbouring parts.
 
 ## Measuring multiple diameters
 
