@@ -124,3 +124,56 @@ def test_view_transform_used_for_clicks(app, tmp_path):
     vt = app.canvas.transform
     x, y = vt.to_image(*vt.to_canvas(123.0, 45.0))
     assert (x, y) == pytest.approx((123.0, 45.0))
+
+
+def test_scale_reference_workflow(app, tmp_path, monkeypatch):
+    import odms.ui.main_window as mw
+    from odms.storage.results import imwrite
+    from odms.synthetic import Disk, flange_scene, render, straight_mapping
+
+    def image(scale):
+        s = flange_scene()
+        s.shapes.append(Disk(-65.0, 0.0, 10.0, 230))
+        return render(s, (1280, 960), straight_mapping(6.4 * scale, (640, 440)), seed=1)
+
+    for name, scale in (("cal.png", 1.0), ("raised.png", 1 / 1.03)):
+        imwrite(tmp_path / name, image(scale))
+
+    answers = {"diameter_mm": 20.0, "mode": "check", "tolerance": 0.005, "max_drift": 0.1,
+               "calibrate": True}
+    monkeypatch.setattr(mw.ReferenceDialog, "show", lambda self: dict(answers))
+
+    app.load_image(tmp_path / "cal.png")
+    wait_current(app)
+    app.new_measurement()
+    app.end_mode()
+    app.measure_panel.name_var.set("Flange outer diameter")
+    app._apply_draft_fields()
+    app.pick_edge(640 + 45 * 6.4, 441)
+    wait_current(app)
+    app.confirm_draft()
+
+    # Calibrate the plane from the reference circle itself (no plane existed).
+    app.start_reference()
+    app._on_press(640 - 65 * 6.4 + 64.0, 440.0, None)
+    out = wait_current(app)
+    assert out.references and out.references[0].ok
+    assert out.results[0].diameter_mm == pytest.approx(90.0, abs=0.1)
+
+    # Camera raised 3 %: check mode blocks millimetres.
+    app.load_image(tmp_path / "raised.png")
+    out = wait_current(app)
+    assert not out.references[0].ok
+    assert out.results[0].diameter_mm is None
+    assert out.results[0].status.value == "Reference check failed"
+
+    # Live mode: scale follows the reference.
+    answers.update(mode="live", calibrate=False)
+    app.load_image(tmp_path / "cal.png")
+    wait_current(app)
+    app.start_reference()
+    app._on_press(640 - 65 * 6.4 + 64.0, 440.0, None)
+    app.load_image(tmp_path / "raised.png")
+    out = wait_current(app)
+    assert out.references[0].ok
+    assert out.results[0].diameter_mm == pytest.approx(90.0, abs=0.15)
