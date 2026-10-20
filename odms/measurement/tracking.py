@@ -35,6 +35,9 @@ class MeasurementSmoother:
             self._windows.pop(uid, None)
             self._keys.pop(uid, None)
 
+    def known_uids(self) -> list[str]:
+        return list(self._windows)
+
     def invalidate(self, uid: str) -> None:
         window = self._windows.get(uid)
         if window is not None:
