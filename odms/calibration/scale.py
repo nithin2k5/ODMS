@@ -1,5 +1,17 @@
-"""Straight-on scale calibration from a reference of known length."""
+"""Straight-on scale calibration.
+
+Two ways to obtain pixels per millimetre for a plane the camera faces
+squarely:
+
+* from a reference of known length lying on the plane (most accurate);
+* from the pinhole model, ``px_per_mm = focal_px / distance_mm``, using the
+  camera's focal length in pixels and the measured distance from the lens's
+  optical centre to the plane.  No reference object is needed, but every
+  1 % of distance error is a 1 % diameter error.
+"""
 from __future__ import annotations
+
+import math
 
 from ..geometry import distance
 from .models import PlaneCalibration, SetupInfo, now_iso
@@ -60,3 +72,52 @@ def revalidate_plane(plane: PlaneCalibration, p1, p2, length_mm: float,
     else:
         plane.requires_revalidation = True
     return passed, measured, rel
+
+
+# Diagonal of a 36 x 24 mm "full-frame" sensor, which defines the
+# "35 mm-equivalent" focal length reported by phones and cameras.
+FULL_FRAME_DIAGONAL_MM = math.hypot(36.0, 24.0)
+
+
+def focal_px_from_35mm(f35_mm: float, width_px: int, height_px: int) -> float:
+    """Focal length in pixels from a 35 mm-equivalent focal length.
+
+    Valid for the camera's full, uncropped field of view (resizing the image
+    is fine; cropping or digital zoom is not).
+    """
+    if f35_mm <= 0:
+        raise ValueError("35 mm-equivalent focal length must be positive")
+    return f35_mm * math.hypot(width_px, height_px) / FULL_FRAME_DIAGONAL_MM
+
+
+def focal_px_from_sensor(f_mm: float, sensor_width_mm: float, width_px: int) -> float:
+    if f_mm <= 0 or sensor_width_mm <= 0:
+        raise ValueError("Focal length and sensor width must be positive")
+    return f_mm * width_px / sensor_width_mm
+
+
+def make_distance_plane(name: str, distance_mm: float, focal_px: float,
+                        lens_id: str | None, setup: SetupInfo | None = None,
+                        focal_source: str = "") -> PlaneCalibration:
+    """Scale from the pinhole model: ``px_per_mm = focal_px / distance_mm``."""
+    if distance_mm is None or distance_mm <= 0:
+        raise ValueError("Camera-to-surface distance must be positive")
+    if focal_px is None or focal_px <= 0:
+        raise ValueError("Focal length in pixels must be positive")
+    return PlaneCalibration(name=name, mode="scale", px_per_mm=focal_px / distance_mm,
+                            lens_id=lens_id, setup=setup or SetupInfo(), method="distance",
+                            distance_mm=float(distance_mm), focal_px=float(focal_px),
+                            focal_source=focal_source, last_validated=now_iso())
+
+
+def exif_focal_35mm(path) -> float | None:
+    """35 mm-equivalent focal length stored in a photo's EXIF data, if any."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            exif = im.getexif()
+            value = exif.get_ifd(0x8769).get(0xA405) or exif.get(0xA405)
+        return float(value) if value else None
+    except Exception:  # missing file, no EXIF, unsupported format
+        return None

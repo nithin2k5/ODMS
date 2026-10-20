@@ -109,6 +109,12 @@ class PlaneCalibration:
     # Scale mode
     ref_points: list[list[float]] = field(default_factory=list)
     ref_length_mm: float | None = None
+    # How the scale was obtained: "reference" (known length on the plane) or
+    # "distance" (focal length in pixels / camera-to-plane distance).
+    method: str = "reference"
+    distance_mm: float | None = None
+    focal_px: float | None = None
+    focal_source: str = ""
     # Perspective mode
     image_points: list[list[float]] = field(default_factory=list)
     world_points: list[list[float]] = field(default_factory=list)

@@ -113,3 +113,23 @@ def test_lens_calibration_on_synthetic_views():
     lens = calibrate_lens(corner_sets, pattern, 10.0, (800, 600))
     assert lens.rms_px < 0.3
     assert lens.camera_matrix[0, 0] == pytest.approx(900.0, rel=0.03)
+
+
+def test_distance_calibration_pinhole_model():
+    from odms.calibration.scale import (focal_px_from_35mm, focal_px_from_sensor,
+                                        make_distance_plane)
+    # 26 mm-equivalent phone lens, 4000x3000 image.
+    f = focal_px_from_35mm(26.0, 4000, 3000)
+    assert f == pytest.approx(26.0 * 5000 / 43.2666, rel=1e-4)
+    # Resizing the photo scales the focal length in pixels with it.
+    assert focal_px_from_35mm(26.0, 2000, 1500) == pytest.approx(f / 2)
+    assert focal_px_from_sensor(4.0, 6.4, 3200) == pytest.approx(2000.0)
+    plane = make_distance_plane("top", 400.0, 2000.0, None, focal_source="test")
+    assert plane.px_per_mm == pytest.approx(5.0)
+    assert plane.method == "distance" and plane.distance_mm == 400.0
+    assert plane.view_distance_mm((0, 0), (500, 0)) == pytest.approx(100.0)
+    with pytest.raises(ValueError):
+        make_distance_plane("top", 0.0, 2000.0, None)
+    cal = CalibrationSet(camera_id="usb:0", resolution=(4000, 3000))
+    cal.planes["top"] = plane
+    assert CalibrationSet.from_dict(cal.to_dict()).planes["top"].focal_px == 2000.0
