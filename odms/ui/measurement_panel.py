@@ -62,6 +62,8 @@ class MeasurementPanel(ttk.Frame):
         bar.pack(fill="x", pady=(4, 0))
         for i in range(5):
             bar.columnconfigure(i, weight=1)
+        ttk.Button(bar, text="Auto-detect rings...", command=app.auto_detect_rings).grid(
+            row=1, column=0, columnspan=5, **b)
         ttk.Button(bar, text="Add", command=app.new_measurement).grid(row=0, column=0, **b)
         ttk.Button(bar, text="Edit", command=self._edit).grid(row=0, column=1, **b)
         ttk.Button(bar, text="Delete", command=self._delete).grid(row=0, column=2, **b)

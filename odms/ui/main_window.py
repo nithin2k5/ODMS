@@ -16,12 +16,13 @@ from ..calibration.lens import find_checkerboard
 from ..calibration.models import CalibrationSet, CalState, LensCalibration
 from ..calibration.perspective import checkerboard_world_points, make_perspective_plane
 from ..calibration.reference import ScaleReference
-from ..calibration.scale import click_sensitivity, make_scale_plane, revalidate_plane
+from ..calibration.scale import (click_sensitivity, exif_focal_35mm, make_distance_plane,
+                                 make_scale_plane, revalidate_plane)
 from ..calibration.store import load_calibration, save_calibration
 from ..camera.source import (BACKENDS, RESOLUTIONS, CameraState, CameraWorker,
                              default_backend, parse_resolution, probe_cameras)
 from ..geometry import apply_homography, circle_points, distance, normalize_rect
-from ..measurement.candidates import select_ring
+from ..measurement.candidates import detect_rings, select_ring
 from ..measurement.engine import EngineConfig, FrameResult
 from ..measurement.models import MeasurementSpec, SpecResult
 from ..measurement.overlay import label_text
@@ -30,8 +31,8 @@ from ..storage.profiles import PartProfile, load_profile, save_profile
 from ..storage.results import ResultStore, imread, result_row
 from ..units import UNIT_NAMES, check_unit, format_length, to_mm
 from .calibration_panel import CalibrationPanel
-from .dialogs import (FormDialog, LensCalibrationDialog, PerspectivePointsDialog,
-                      ReferenceDialog, run_in_background)
+from .dialogs import (AutoDetectDialog, DistanceDialog, FormDialog, LensCalibrationDialog,
+                      PerspectivePointsDialog, ReferenceDialog, run_in_background)
 from .measurement_panel import MeasurementPanel, ProcessingPanel
 from .preview import PreviewCanvas
 from .results_panel import ResultsPanel
@@ -86,6 +87,7 @@ class MainWindow:
         self._configs: dict[int, EngineConfig] = {}
         self._fields_job = None
         self._stale = False
+        self.image_path: Path | None = None
 
         self._build_ui()
         self._load_last_calibration()
@@ -437,6 +439,7 @@ class MainWindow:
         self._stop_camera_thread()
         self.source_mode = "image"
         self.source_id = IMAGE_SOURCE_ID
+        self.image_path = Path(path)
         self.worker.set_static_frame(image, IMAGE_SOURCE_ID)
         self.freeze_btn.configure(text="Freeze Frame")
         self.push_config()
@@ -705,6 +708,85 @@ class MainWindow:
             return None
         return ((ring[0], ring[1]), max(ring[2] - half, 0.0), ring[2] + half), ring[2]
 
+    # ------------------------------------------------------- automatic rings
+    def auto_detect_rings(self) -> None:
+        if self.latest is None:
+            messagebox.showinfo("Auto-detect", "Start a camera or load an image first.",
+                                parent=self.root)
+            return
+        if self.draft is not None:
+            messagebox.showinfo("Auto-detect", "Finish or cancel the measurement being set "
+                                "up first.", parent=self.root)
+            return
+        roi = None
+        vt = self.canvas.transform
+        if vt is not None and self.canvas.zoom > 1.0:
+            roi = (vt.crop_x, vt.crop_y, vt.crop_w, vt.crop_h)   # visible area only
+        view = self.latest.view.copy()
+        self.set_status("Detecting rings" + (" in the visible area" if roi else "") + "...")
+        run_in_background(self.root, lambda: detect_rings(view, roi), self._rings_detected)
+
+    def _ring_mm_text(self, plane_name: str):
+        cal = self.calibration
+        if cal is None or self.latest is None:
+            return None
+        state, _ = cal.plane_state(plane_name, self.source_id, self.latest.resolution)
+        plane = cal.planes.get(plane_name)
+        if state is CalState.VALID and plane is not None and plane.mode == "scale":
+            return lambda d_px: f"{d_px:.1f} px  ({format_length(d_px / plane.px_per_mm, self.unit)})"
+        return None
+
+    def _show_ring_overlay(self, rings, selected: list[int]) -> None:
+        shapes = []
+        for i, ring in enumerate(rings):
+            on = i in selected
+            shapes.append({"type": "circle", "circle": (ring.cx, ring.cy, ring.r),
+                           "color": "#00e5ff" if on else "#9e9e9e", "width": 3 if on else 1,
+                           "dash": None if on else (4, 3)})
+            shapes.append({"type": "marker", "point": (ring.cx + ring.r * 0.7071,
+                                                        ring.cy - ring.r * 0.7071),
+                           "color": "#00e5ff" if on else "#bdbdbd", "size": 3,
+                           "label": str(i + 1)})
+        self.canvas.set_overlay(shapes)
+
+    def _rings_detected(self, rings, error) -> None:
+        if error is not None:
+            self.set_status(f"Ring detection failed: {error}")
+            return
+        if not rings:
+            self.set_status("No well-defined rings found.")
+            messagebox.showinfo("Auto-detect", "No well-defined circular boundaries were found. "
+                                "Zoom into the part, improve the lighting, or pick the edge "
+                                "manually.", parent=self.root)
+            return
+        plane_name = self.cal_panel.target_plane
+        mm_text = self._ring_mm_text(plane_name)
+        describe = mm_text or (lambda d_px: f"{d_px:.1f} px")
+        self.set_status(f"{len(rings)} ring(s) found - tick the ones to measure.")
+        picked = AutoDetectDialog(self.root, rings, describe,
+                                  lambda sel: self._show_ring_overlay(rings, sel)).show()
+        self._update_overlay()
+        if not picked:
+            self.set_status("No rings added.")
+            return
+        lock = self._perspective_plane_for(plane_name) is None
+        added = []
+        for i in picked:
+            ring = rings[i]
+            name = self.profile.unique_name(f"Ring {i + 1}")
+            half = min(self.measure_panel.band_half_width, max(3.0, 0.3 * ring.r))
+            spec = MeasurementSpec(name=name, plane=plane_name, center=(ring.cx, ring.cy),
+                                   r_inner=max(ring.r - half, 0.0), r_outer=ring.r + half)
+            spec.params.polarity = ring.polarity
+            if lock:
+                spec.locked_radius, spec.locked_space = ring.r, "view"
+            self.profile.specs.append(spec)
+            added.append(name)
+        self.refresh_all()
+        self.push_config()
+        self.set_status(f"Added {', '.join(added)}. Rename them with Edit, then save the "
+                        "profile.")
+
     def _current_draft_result(self) -> SpecResult | None:
         if self.latest is None or self.latest.config_version != self._version:
             return None
@@ -943,6 +1025,49 @@ class MainWindow:
         cal.planes[name] = plane
         self._calibration_changed()
         self.set_status(f"Plane '{name}' calibrated: {plane.px_per_mm:.5f} px/mm.")
+
+    def start_distance_calibration(self) -> None:
+        cal = self._ensure_calset()
+        if cal is None:
+            return
+        res = self.latest.resolution
+        lens_f = None
+        if cal.lens is not None and cal.lens_active(self.source_id, res):
+            K = cal.lens.camera_matrix
+            lens_f = float(K[0][0] + K[1][1]) / 2.0
+        exif = exif_focal_35mm(self.image_path) if (self.source_mode == "image"
+                                                    and self.image_path) else None
+        form = DistanceDialog(self.root, self.unit, res, lens_f, exif).show()
+        if not form:
+            return
+        name = self.cal_panel.target_plane
+        try:
+            plane = make_distance_plane(name, form["distance_mm"], form["focal_px"],
+                                        self._lens_id(cal), self.cal_panel.setup_info(),
+                                        form["source"])
+        except ValueError as exc:
+            messagebox.showerror("Camera distance", str(exc), parent=self.root)
+            return
+        rel = form["uncert_mm"] / form["distance_mm"]
+        if not messagebox.askyesno(
+                "Scale from camera distance",
+                f"Plane '{name}': {plane.px_per_mm:.4f} px/mm from focal length "
+                f"{plane.focal_px:.1f} px ({form['source']}) at "
+                f"{format_length(form['distance_mm'], self.unit)}.\n\n"
+                f"Distance uncertainty +/- {format_length(form['uncert_mm'], self.unit)} means "
+                f"about +/- {rel:.2%} on every diameter, plus any focal-length error"
+                + (" (35 mm-equivalent values are rounded and can be off by a few %)"
+                   if form["source"].startswith("35") else "")
+                + ".\n\nThe camera must be square to the surface, and the distance measured to "
+                "the lens's optical centre (not the camera body). Revalidate with a known part "
+                "when you can.\n\nUse this calibration?", parent=self.root) \
+                or not self._confirm_overwrite_plane(cal, name):
+            self.set_status("Distance calibration discarded.")
+            return
+        cal.planes[name] = plane
+        self._calibration_changed()
+        self.set_status(f"Plane '{name}' calibrated from camera distance: "
+                        f"{plane.px_per_mm:.4f} px/mm.")
 
     def start_perspective_points(self) -> None:
         if self._ensure_calset() is not None:

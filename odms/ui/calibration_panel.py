@@ -92,6 +92,8 @@ class CalibrationPanel(ttk.Frame):
         self.finish_btn.grid(row=2, column=1, **b)
         ttk.Button(steps, text="Perspective: checkerboard...",
                    command=app.perspective_from_checkerboard).grid(row=2, column=0, **b)
+        ttk.Button(steps, text="Scale: camera distance...",
+                   command=app.start_distance_calibration).grid(row=3, column=0, **b)
 
         ref = ttk.LabelFrame(self, text="Live scale reference (measured every frame)",
                              padding=6)
@@ -201,6 +203,8 @@ class CalibrationPanel(ttk.Frame):
             state, why = (cal.plane_state(name, camera_id, resolution) if resolution
                           else (CalState.INVALID, "no image"))
             mode = "straight-on" if plane.mode == "scale" else "perspective"
+            if plane.method == "distance":
+                mode = "distance"
             scale = f"{plane.px_per_mm:.4f}"
             text = STATE_TEXT[state]
             rr = ref_by_plane.get(name)

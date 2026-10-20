@@ -177,3 +177,53 @@ def test_scale_reference_workflow(app, tmp_path, monkeypatch):
     out = wait_current(app)
     assert out.references[0].ok
     assert out.results[0].diameter_mm == pytest.approx(90.0, abs=0.15)
+
+
+def test_auto_detect_and_distance_calibration(app, tmp_path, monkeypatch):
+    import odms.ui.main_window as mw
+    from odms.storage.results import imwrite
+    from odms.synthetic import make_samples
+
+    image, scene, m = make_samples()["flange"]
+    ppm = m[0, 0]
+    imwrite(tmp_path / "flange.png", image)
+
+    class FakeDetect:
+        def __init__(self, parent, rings, describe, on_highlight):
+            self.rings = rings
+            on_highlight([0])           # preview path runs without error
+
+        def show(self):
+            return [0, 1, 2]            # outer, recess, bore (largest first)
+
+    distance, focal = 500.0, 500.0 * ppm   # pinhole model: ppm = f / Z
+
+    class FakeDistance:
+        def __init__(self, *a, **k):
+            pass
+
+        def show(self):
+            return {"distance_mm": distance, "uncert_mm": 2.0, "focal_px": focal,
+                    "source": "test"}
+
+    monkeypatch.setattr(mw, "AutoDetectDialog", FakeDetect)
+    monkeypatch.setattr(mw, "DistanceDialog", FakeDistance)
+
+    app.load_image(tmp_path / "flange.png")
+    wait_current(app)
+    app.auto_detect_rings()
+    end = time.time() + 20
+    while len(app.profile.specs) < 3 and time.time() < end:
+        app.root.update()
+        time.sleep(0.02)
+    assert [s.name for s in app.profile.specs] == ["Ring 1", "Ring 2", "Ring 3"]
+    results = wait_current(app).results
+    assert all(r.status.value == "Calibration required" for r in results)
+
+    app.start_distance_calibration()
+    results = wait_current(app).results
+    got = [r.diameter_mm for r in results]
+    assert got == [pytest.approx(90.0, abs=0.1), pytest.approx(50.0, abs=0.1),
+                   pytest.approx(24.0, abs=0.1)]
+    plane = app.calibration.planes["default"]
+    assert plane.method == "distance" and plane.distance_mm == distance
