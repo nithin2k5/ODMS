@@ -293,6 +293,7 @@ PARAM_FIELDS = [
     ("max_edge_width_px", "Max edge width / blur (px)", "float", 1.0, 30.0, 0.5),
     ("max_saturation", "Max saturated fraction (glare)", "float", 0.0, 1.0, 0.05),
     ("max_ellipticity", "Max ellipticity (axis ratio - 1)", "float", 0.001, 0.5, 0.005),
+    ("min_ellipse_dev_px", "...only if out of round by (px)", "float", 0.0, 10.0, 0.1),
     ("lock_tolerance", "Ring lock tolerance (relative)", "float", 0.005, 0.5, 0.005),
     ("smoothing_window", "Smoothing window (frames)", "int", 1, 50, 1),
     ("move_tolerance_px", "Reset smoothing if moved (px)", "float", 0.5, 50.0, 0.5),

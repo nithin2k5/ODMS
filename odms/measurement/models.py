@@ -41,6 +41,9 @@ class ProcessingParams:
     max_edge_width_px: float = 7.0      # median edge-profile FWHM (blur check)
     max_saturation: float = 0.20        # fraction of saturated band pixels (glare)
     max_ellipticity: float = 0.015      # allowed (major/minor - 1)
+    # ...and only judged when the ellipse departs from the circle by more than
+    # this (px), so fit noise on small rings is not mistaken for camera tilt.
+    min_ellipse_dev_px: float = 0.5
     lock_tolerance: float = 0.05        # allowed relative radius change vs confirmed ring
     # Temporal smoothing
     smoothing_window: int = 5
@@ -139,6 +142,7 @@ class QualityReport:
     edge_width_px: float = float("nan")
     saturation: float = 0.0
     axis_ratio: float | None = None
+    radius_px: float = 0.0
     edge_sign: int = 0                  # +1 rising, -1 falling, 0 unknown
 
 

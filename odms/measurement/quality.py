@@ -36,8 +36,16 @@ def assess_fit(fit: CircleFit, edges: EdgeSamples, params: ProcessingParams,
         mean_sign = float(np.mean(signs))
         q.edge_sign = 1 if mean_sign > 0.8 else (-1 if mean_sign < -0.8 else 0)
     q.axis_ratio = fit_ellipse_axis_ratio(inlier_points)
+    q.radius_px = fit.r
     q.score = detection_score(q, params)
     return q
+
+
+def ellipse_deviation_px(q: QualityReport) -> float:
+    """Approximate half-difference of the ellipse axes, in pixels."""
+    if q.axis_ratio is None:
+        return 0.0
+    return (q.axis_ratio - 1.0) * q.radius_px / 2.0
 
 
 def rejection_reason(q: QualityReport, params: ProcessingParams) -> str | None:
@@ -57,7 +65,9 @@ def rejection_reason(q: QualityReport, params: ProcessingParams) -> str | None:
         return f"Poor circle fit: RMS residual {q.rms_px:.2f} px"
     if np.isfinite(q.edge_width_px) and q.edge_width_px > params.max_edge_width_px:
         return f"Edge blurred: profile width {q.edge_width_px:.1f} px - check focus"
-    if q.axis_ratio is not None and q.axis_ratio - 1.0 > params.max_ellipticity:
-        return (f"Boundary is elliptical (axis ratio {q.axis_ratio:.3f}): camera not "
+    if (q.axis_ratio is not None and q.axis_ratio - 1.0 > params.max_ellipticity
+            and ellipse_deviation_px(q) > params.min_ellipse_dev_px):
+        return (f"Boundary is elliptical (axis ratio {q.axis_ratio:.3f}, "
+                f"{ellipse_deviation_px(q):.1f} px from round): camera not "
                 "square to this plane - use perspective calibration")
     return None

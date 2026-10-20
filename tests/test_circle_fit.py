@@ -64,3 +64,17 @@ def test_ellipse_ratio_detects_tilt():
     ellipse = circle * np.array([1.0, math.cos(math.radians(20))])
     assert fit_ellipse_axis_ratio(ellipse) == pytest.approx(1 / math.cos(math.radians(20)),
                                                             abs=1e-3)
+
+
+def test_ellipticity_ignored_on_small_rings_but_caught_on_large():
+    from odms.measurement.models import ProcessingParams, QualityReport
+    from odms.measurement.quality import rejection_reason
+
+    p = ProcessingParams()
+    base = dict(coverage=1.0, max_gap_deg=0.0, inlier_ratio=1.0, rms_px=0.3,
+                edge_width_px=3.0, saturation=0.0, axis_ratio=1.016)
+    # 30 px radius: 1.6 % is ~0.24 px out of round - fit noise, not tilt.
+    assert rejection_reason(QualityReport(radius_px=30.0, **base), p) is None
+    # 200 px radius: the same ratio is 1.6 px out of round - real tilt.
+    reason = rejection_reason(QualityReport(radius_px=200.0, **base), p)
+    assert reason and "elliptical" in reason
