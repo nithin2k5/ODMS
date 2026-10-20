@@ -4,6 +4,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
+from ..units import DEFAULT_UNIT, format_length
 from .models import SpecResult, Status
 
 # BGR colours
@@ -43,7 +44,7 @@ def status_colour(result: SpecResult) -> tuple[int, int, int]:
     }.get(result.status, GREY)
 
 
-def label_text(result: SpecResult) -> str:
+def label_text(result: SpecResult, unit: str = DEFAULT_UNIT) -> str:
     prefix = "[setup] " if result.is_draft else ""
     if result.status in (Status.NOT_DETECTED, Status.INCOMPLETE):
         return f"{prefix}{result.name}: {result.status.value}"
@@ -51,7 +52,7 @@ def label_text(result: SpecResult) -> str:
         return f"{prefix}{result.name}: rejected"
     if result.diameter_mm is not None:
         tail = f" {result.status.value}" if result.status in (Status.PASS, Status.FAIL) else ""
-        return f"{prefix}{result.name}: {result.diameter_mm:.3f} mm{tail}"
+        return f"{prefix}{result.name}: {format_length(result.diameter_mm, unit)}{tail}"
     if result.diameter_px is not None:
         return f"{prefix}{result.name}: {result.diameter_px:.2f} px ({result.status.value})"
     return f"{prefix}{result.name}"
@@ -70,7 +71,7 @@ def _draw_label(img: np.ndarray, text: str, anchor: tuple[float, float],
 
 def draw_results(image: np.ndarray, results: list[SpecResult],
                  rois: dict[str, tuple[int, int, int, int] | None] | None = None,
-                 show_edge_points: bool = False) -> np.ndarray:
+                 show_edge_points: bool = False, unit: str = DEFAULT_UNIT) -> np.ndarray:
     h, w = image.shape[:2]
     t = max(1, int(round(min(h, w) / 480)))
     font_scale = max(0.45, min(h, w) / 1100)
@@ -115,5 +116,5 @@ def draw_results(image: np.ndarray, results: list[SpecResult],
             anchor = res.center_view
         else:
             continue
-        _draw_label(image, label_text(res), anchor, colour, font_scale, max(1, t))
+        _draw_label(image, label_text(res, unit), anchor, colour, font_scale, max(1, t))
     return image

@@ -31,6 +31,7 @@ class EngineConfig:
     calibration: CalibrationSet | None = None
     camera_id: str = "none"
     show_edge_points: bool = False
+    unit: str = "mm"                    # display unit for overlay labels
     version: int = 0
 
 
@@ -85,7 +86,8 @@ class MeasurementEngine:
         rois = {s.uid: s.roi for s in config.specs}
         if config.draft is not None:
             rois[DRAFT_UID] = config.draft.roi
-        draw_results(annotated, drawn, rois, show_edge_points=config.show_edge_points)
+        draw_results(annotated, drawn, rois, show_edge_points=config.show_edge_points,
+                     unit=config.unit)
 
         # Forget smoothing state of measurements that no longer exist.
         for uid in self.smoother.known_uids():

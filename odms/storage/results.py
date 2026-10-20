@@ -13,10 +13,11 @@ import numpy as np
 from ..calibration.models import CalibrationSet
 from ..measurement.engine import FrameResult
 from ..measurement.models import SpecResult
+from ..units import DEFAULT_UNIT, check_unit, decimals, from_mm
 
 CSV_FIELDS = [
     "timestamp", "part_profile", "measurement", "plane", "diameter_mm", "diameter_px",
-    "units", "status", "reason", "min_mm", "max_mm", "detection_quality", "fit_rms_px",
+    "units", "display_unit", "diameter_display", "min_display", "max_display", "status", "reason", "min_mm", "max_mm", "detection_quality", "fit_rms_px",
     "inlier_ratio", "angular_coverage", "max_gap_deg", "edge_width_px", "rays_with_edge",
     "smoothing_samples", "measurement_space", "calibration_id", "plane_calibration_id",
     "calibration_state", "px_per_mm", "lens_applied", "camera_id", "resolution",
@@ -51,7 +52,10 @@ def imread(path: str | Path) -> np.ndarray | None:
 
 def result_row(r: SpecResult, frame: FrameResult, profile_name: str,
                calibration: CalibrationSet | None, timestamp: str,
-               annotated_path: str = "", raw_path: str = "") -> dict[str, str]:
+               annotated_path: str = "", raw_path: str = "",
+               unit: str = DEFAULT_UNIT) -> dict[str, str]:
+    unit = check_unit(unit)
+    d = decimals(unit)
     plane = calibration.planes.get(r.plane) if calibration else None
     q = r.quality
     return {
@@ -62,6 +66,10 @@ def result_row(r: SpecResult, frame: FrameResult, profile_name: str,
         "diameter_mm": _fmt(r.diameter_mm),
         "diameter_px": _fmt(r.diameter_px, 3),
         "units": "mm" if r.diameter_mm is not None else ("px" if r.diameter_px else ""),
+        "display_unit": unit,
+        "diameter_display": _fmt(from_mm(r.diameter_mm, unit), d),
+        "min_display": _fmt(from_mm(r.min_mm, unit), d),
+        "max_display": _fmt(from_mm(r.max_mm, unit), d),
         "status": r.status.value,
         "reason": r.reason,
         "min_mm": _fmt(r.min_mm),
@@ -115,7 +123,8 @@ class ResultStore:
         return self.directory / "results_log.csv"
 
     def save_capture(self, frame: FrameResult, profile_name: str,
-                     calibration: CalibrationSet | None) -> tuple[list[dict[str, str]], Path]:
+                     calibration: CalibrationSet | None,
+                     unit: str = DEFAULT_UNIT) -> tuple[list[dict[str, str]], Path]:
         """Save annotated + raw images and append one row per measurement."""
         stamp = datetime.now()
         ts = stamp.isoformat(timespec="milliseconds")
@@ -126,7 +135,8 @@ class ResultStore:
         raw = image_dir / f"{base}_raw.png"
         imwrite(annotated, frame.annotated)
         imwrite(raw, frame.raw)
-        rows = [result_row(r, frame, profile_name, calibration, ts, str(annotated), str(raw))
+        rows = [result_row(r, frame, profile_name, calibration, ts, str(annotated), str(raw),
+                           unit)
                 for r in frame.results]
         write_csv(self.log_path, rows, append=True)
         self.session_rows.extend(rows)

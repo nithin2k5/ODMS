@@ -1,6 +1,7 @@
 import csv
 
 import numpy as np
+import pytest
 
 from odms.calibration.models import CalibrationSet
 from odms.calibration.scale import make_scale_plane
@@ -14,11 +15,11 @@ def test_profile_round_trip(tmp_path):
     spec = MeasurementSpec(name="Flange outer diameter", plane="face", roi=(1, 2, 300, 400),
                            center=(150.5, 200.25), r_inner=120, r_outer=140, min_mm=89.9,
                            max_mm=90.1, params=ProcessingParams(polarity="falling", n_rays=240))
-    profile = PartProfile(name="Flange A", specs=[spec], calibration_id="abc")
+    profile = PartProfile(name="Flange A", specs=[spec], calibration_id="abc", unit="in")
     path = tmp_path / "flange.json"
     save_profile(path, profile)
     loaded = load_profile(path)
-    assert loaded.name == "Flange A"
+    assert loaded.name == "Flange A" and loaded.unit == "in"
     s = loaded.specs[0]
     assert s.uid == spec.uid and s.roi == (1, 2, 300, 400) and s.center == (150.5, 200.25)
     assert s.params.polarity == "falling" and s.params.n_rays == 240
@@ -37,9 +38,12 @@ def test_save_capture_and_export(tmp_path):
         img, EngineConfig(specs=[spec], calibration=cal, camera_id="image-file"))
 
     store = ResultStore(tmp_path / "results")
-    rows, annotated = store.save_capture(frame, "Test part", cal)
+    rows, annotated = store.save_capture(frame, "Test part", cal, unit="cm")
     assert annotated.exists() and imread(annotated) is not None
     assert rows[0]["units"] == "mm" and rows[0]["calibration_id"] == cal.calibration_id
+    assert rows[0]["display_unit"] == "cm"
+    assert float(rows[0]["diameter_display"]) == pytest.approx(
+        float(rows[0]["diameter_mm"]) / 10, abs=1e-3)
     store.save_capture(frame, "Test part", cal)
 
     out = tmp_path / "export.csv"

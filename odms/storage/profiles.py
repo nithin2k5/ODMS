@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..measurement.models import MeasurementSpec
+from ..units import DEFAULT_UNIT, check_unit
 
 
 def _now() -> str:
@@ -25,6 +26,8 @@ class PartProfile:
     calibration_id: str | None = None
     camera_id: str | None = None
     lens_id: str | None = None
+    # Display/entry unit; limits and results are stored in millimetres.
+    unit: str = DEFAULT_UNIT
     created: str = field(default_factory=_now)
     updated: str = field(default_factory=_now)
 
@@ -49,6 +52,7 @@ class PartProfile:
             "calibration_id": self.calibration_id,
             "camera_id": self.camera_id,
             "lens_id": self.lens_id,
+            "unit": self.unit,
             "created": self.created,
             "updated": self.updated,
             "measurements": [s.to_dict() for s in self.specs],
@@ -61,8 +65,8 @@ class PartProfile:
         return cls(name=d.get("name", "Untitled part"), description=d.get("description", ""),
                    specs=[MeasurementSpec.from_dict(s) for s in d.get("measurements", [])],
                    calibration_id=d.get("calibration_id"), camera_id=d.get("camera_id"),
-                   lens_id=d.get("lens_id"), created=d.get("created", _now()),
-                   updated=d.get("updated", _now()))
+                   lens_id=d.get("lens_id"), unit=check_unit(d.get("unit")),
+                   created=d.get("created", _now()), updated=d.get("updated", _now()))
 
 
 def save_profile(path: str | Path, profile: PartProfile) -> None:
