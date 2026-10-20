@@ -148,6 +148,74 @@ class PerspectivePointsDialog(_Modal):
         self.destroy()
 
 
+class ReferenceDialog(_Modal):
+    """Known diameter and mode of a scale reference measured every frame."""
+
+    def __init__(self, parent, unit: str, plane_name: str, plane_exists: bool,
+                 perspective: bool, measured_px: float,
+                 initial: dict | None = None) -> None:
+        super().__init__(parent, "Live scale reference")
+        initial = initial or {}
+        self.unit = unit
+        self._force_cal = not plane_exists
+        ttk.Label(self.body, wraplength=440, justify="left", text=(
+            f"Reference circle on plane '{plane_name}' (fitted diameter {measured_px:.2f} px). "
+            "It must stay in view, lie on the same plane and at the same height as the "
+            "measured boundaries, and have an independently certified diameter.")).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.diameter = tk.StringVar(value=initial.get("diameter", ""))
+        self.mode = tk.StringVar(value=initial.get("mode", "check"))
+        self.tol = tk.StringVar(value=initial.get("tolerance", "0.5"))
+        self.drift = tk.StringVar(value=initial.get("max_drift", "10"))
+        self.calibrate = tk.BooleanVar(value=not plane_exists)
+        ttk.Label(self.body, text=f"Certified diameter ({unit})").grid(row=1, column=0, sticky="w")
+        entry = ttk.Entry(self.body, textvariable=self.diameter, width=14)
+        entry.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=2)
+        entry.focus_set()
+        ttk.Radiobutton(self.body, text="Check - block millimetres if the scale changes",
+                        variable=self.mode, value="check").grid(row=2, column=0, columnspan=2,
+                                                                sticky="w", pady=(6, 0))
+        live = ttk.Radiobutton(self.body, text="Live scale - take the scale from the reference "
+                               "every frame (compensates camera height)",
+                               variable=self.mode, value="live")
+        live.grid(row=3, column=0, columnspan=2, sticky="w")
+        if perspective:
+            live.state(["disabled"])
+            self.mode.set("check")
+            ttk.Label(self.body, foreground="#555", text="Live scale is only available for "
+                      "straight-on planes; perspective planes use check mode.").grid(
+                row=4, column=0, columnspan=2, sticky="w")
+        ttk.Label(self.body, text="Check tolerance (%)").grid(row=5, column=0, sticky="w",
+                                                              pady=(6, 0))
+        ttk.Entry(self.body, textvariable=self.tol, width=8).grid(row=5, column=1, sticky="w",
+                                                                  padx=(8, 0), pady=(6, 0))
+        ttk.Label(self.body, text="Live scale max drift (%)").grid(row=6, column=0, sticky="w")
+        ttk.Entry(self.body, textvariable=self.drift, width=8).grid(row=6, column=1, sticky="w",
+                                                                    padx=(8, 0))
+        cb = ttk.Checkbutton(self.body, text="Calibrate the plane's scale from this reference now",
+                             variable=self.calibrate)
+        cb.grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        if perspective or not plane_exists:
+            cb.state(["disabled"])
+        self.buttons("Use reference")
+
+    def ok(self) -> None:
+        try:
+            d = float(self.diameter.get())
+            tol = float(self.tol.get()) / 100.0
+            drift = float(self.drift.get()) / 100.0
+            if d <= 0 or tol <= 0 or drift <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Scale reference", "Enter a positive diameter, tolerance and "
+                                 "drift limit.", parent=self)
+            return
+        self.result = {"diameter_mm": to_mm(d, self.unit), "mode": self.mode.get(),
+                       "tolerance": tol, "max_drift": drift,
+                       "calibrate": self._force_cal or bool(self.calibrate.get())}
+        self.destroy()
+
+
 class LensCalibrationDialog(tk.Toplevel):
     """Collect checkerboard views and compute a lens (distortion) calibration."""
 

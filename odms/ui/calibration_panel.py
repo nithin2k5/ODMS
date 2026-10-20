@@ -24,6 +24,7 @@ STATE_TEXT = {
     CalState.REVALIDATE: "Revalidation required",
     CalState.INVALID: "Invalid",
     CalState.MISSING: "Missing",
+    CalState.REFERENCE_FAILED: "Reference check failed",
 }
 
 
@@ -92,8 +93,20 @@ class CalibrationPanel(ttk.Frame):
         ttk.Button(steps, text="Perspective: checkerboard...",
                    command=app.perspective_from_checkerboard).grid(row=2, column=0, **b)
 
+        ref = ttk.LabelFrame(self, text="Live scale reference (measured every frame)",
+                             padding=6)
+        ref.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        ref.columnconfigure((0, 1), weight=1)
+        ttk.Button(ref, text="Define reference circle",
+                   command=app.start_reference).grid(row=0, column=0, **b)
+        ttk.Button(ref, text="Remove reference",
+                   command=app.remove_reference).grid(row=0, column=1, **b)
+        self.ref_var = tk.StringVar(value="No scale reference.")
+        ttk.Label(ref, textvariable=self.ref_var, wraplength=330, justify="left").grid(
+            row=1, column=0, columnspan=2, sticky="w")
+
         check = ttk.LabelFrame(self, text="Validity", padding=6)
-        check.grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        check.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         check.columnconfigure((0, 1), weight=1)
         ttk.Button(check, text="Revalidate plane...",
                    command=app.start_revalidation).grid(row=0, column=0, **b)
@@ -108,7 +121,7 @@ class CalibrationPanel(ttk.Frame):
         ttk.Button(check, text="Delete plane", command=self._delete).grid(row=2, column=0, **b)
 
         files = ttk.Frame(self)
-        files.grid(row=5, column=0, sticky="ew", pady=(6, 0))
+        files.grid(row=6, column=0, sticky="ew", pady=(6, 0))
         files.columnconfigure((0, 1, 2), weight=1)
         ttk.Button(files, text="New", command=app.new_calibration).grid(row=0, column=0, **b)
         ttk.Button(files, text="Load...", command=app.load_calibration_dialog).grid(
@@ -120,7 +133,7 @@ class CalibrationPanel(ttk.Frame):
             "Mark references on the same plane, at the same height, as the boundary to be "
             "measured. Different surface heights need separate planes."))
         ttk.Label(self, textvariable=self.hint_var, wraplength=340, justify="left",
-                  foreground="#555").grid(row=6, column=0, sticky="ew", pady=(8, 0))
+                  foreground="#555").grid(row=7, column=0, sticky="ew", pady=(8, 0))
 
     # -- values for the controller ------------------------------------------------
     @property
@@ -150,7 +163,15 @@ class CalibrationPanel(ttk.Frame):
 
     # -- refresh -----------------------------------------------------------------
     def refresh(self, cal: CalibrationSet | None, camera_id: str,
-                resolution: tuple[int, int] | None, lens_applied: bool) -> None:
+                resolution: tuple[int, int] | None, lens_applied: bool,
+                references: list | None = None) -> None:
+        ref_by_plane = {r.plane: r for r in references or []}
+        if not ref_by_plane:
+            has_ref = cal is not None and any(p.reference for p in cal.planes.values())
+            self.ref_var.set("Reference defined; waiting for a usable frame." if has_ref
+                             else "No scale reference.")
+        else:
+            self.ref_var.set("\n".join(r.summary for r in ref_by_plane.values()))
         if cal is None:
             self.info_var.set("No calibration. Measurements are shown in pixels only.\n"
                               f"Source: {camera_id}"
@@ -180,8 +201,15 @@ class CalibrationPanel(ttk.Frame):
             state, why = (cal.plane_state(name, camera_id, resolution) if resolution
                           else (CalState.INVALID, "no image"))
             mode = "straight-on" if plane.mode == "scale" else "perspective"
-            self.tree.insert("", "end", iid=name, text=name,
-                             values=(mode, f"{plane.px_per_mm:.4f}", STATE_TEXT[state]))
+            scale = f"{plane.px_per_mm:.4f}"
+            text = STATE_TEXT[state]
+            rr = ref_by_plane.get(name)
+            if rr is not None:
+                text = (f"Valid (reference {rr.mode})" if rr.ok
+                        else STATE_TEXT[CalState.REFERENCE_FAILED])
+                if rr.ok and rr.mode == "live" and rr.px_per_mm:
+                    scale = f"{rr.px_per_mm:.4f}*"
+            self.tree.insert("", "end", iid=name, text=name, values=(mode, scale, text))
         if selected in names:
             self.tree.selection_set(selected)
 
