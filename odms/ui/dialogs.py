@@ -12,7 +12,7 @@ import numpy as np
 from ..calibration.lens import RECOMMENDED_VIEWS, calibrate_lens, find_checkerboard
 from ..calibration.models import LensCalibration
 from ..storage.results import imread
-from ..units import to_mm
+from ..units import format_length, from_mm, to_mm
 
 
 def run_in_background(widget: tk.Misc, work: Callable[[], Any],
@@ -213,6 +213,137 @@ class ReferenceDialog(_Modal):
         self.result = {"diameter_mm": to_mm(d, self.unit), "mode": self.mode.get(),
                        "tolerance": tol, "max_drift": drift,
                        "calibrate": self._force_cal or bool(self.calibrate.get())}
+        self.destroy()
+
+
+class DistanceDialog(_Modal):
+    """Scale from camera distance: px_per_mm = focal_px / distance."""
+
+    def __init__(self, parent, unit: str, image_size: tuple[int, int],
+                 lens_focal_px: float | None, exif_f35: float | None) -> None:
+        super().__init__(parent, "Scale from camera distance")
+        self.unit = unit
+        self.size = image_size
+        self.lens_focal_px = lens_focal_px
+        ttk.Label(self.body, wraplength=460, justify="left", text=(
+            "No reference object needed. Measure the distance from the camera lens's "
+            "optical centre to the measured surface, with the camera square to the surface. "
+            "Every 1 % error in the distance becomes a 1 % error in every diameter.")).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.distance = tk.StringVar()
+        self.uncert = tk.StringVar(value=f"{from_mm(2.0, unit):g}")
+        ttk.Label(self.body, text=f"Lens-to-surface distance ({unit})").grid(row=1, column=0,
+                                                                             sticky="w")
+        e = ttk.Entry(self.body, textvariable=self.distance, width=12)
+        e.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=2)
+        e.focus_set()
+        ttk.Label(self.body, text=f"Distance uncertainty +/- ({unit})").grid(row=2, column=0,
+                                                                            sticky="w")
+        ttk.Entry(self.body, textvariable=self.uncert, width=12).grid(row=2, column=1,
+                                                                      sticky="w", padx=(8, 0))
+
+        ttk.Label(self.body, text="Focal length", font=("Segoe UI", 9, "bold")).grid(
+            row=3, column=0, sticky="w", pady=(10, 2))
+        self.source = tk.StringVar(value="lens" if lens_focal_px else "f35")
+        self.f35 = tk.StringVar(value=f"{exif_f35:g}" if exif_f35 else "")
+        self.fpx = tk.StringVar()
+        lens_rb = ttk.Radiobutton(
+            self.body, variable=self.source, value="lens",
+            text=(f"From lens calibration ({lens_focal_px:.1f} px)" if lens_focal_px
+                  else "From lens calibration (none for this camera)"))
+        lens_rb.grid(row=4, column=0, columnspan=2, sticky="w")
+        if not lens_focal_px:
+            lens_rb.state(["disabled"])
+        ttk.Radiobutton(self.body, variable=self.source, value="f35",
+                        text="35 mm-equivalent focal length (mm)").grid(row=5, column=0,
+                                                                         sticky="w")
+        ttk.Entry(self.body, textvariable=self.f35, width=12).grid(row=5, column=1, sticky="w",
+                                                                   padx=(8, 0))
+        hint = ("read from this photo's EXIF data" if exif_f35 else
+                "phones show it in the photo's details, e.g. '26 mm'; full, uncropped photo")
+        ttk.Label(self.body, text=hint, foreground="#555").grid(row=6, column=0, columnspan=2,
+                                                                sticky="w", padx=(20, 0))
+        ttk.Radiobutton(self.body, variable=self.source, value="px",
+                        text="Focal length in pixels").grid(row=7, column=0, sticky="w")
+        ttk.Entry(self.body, textvariable=self.fpx, width=12).grid(row=7, column=1, sticky="w",
+                                                                   padx=(8, 0))
+        self.buttons("Calibrate")
+
+    def ok(self) -> None:
+        from ..calibration.scale import focal_px_from_35mm
+
+        try:
+            dist = to_mm(float(self.distance.get()), self.unit)
+            unc = to_mm(float(self.uncert.get() or 0), self.unit)
+            src = self.source.get()
+            if src == "lens":
+                focal, label = self.lens_focal_px, "lens calibration"
+            elif src == "f35":
+                f35 = float(self.f35.get())
+                focal = focal_px_from_35mm(f35, *self.size)
+                label = f"35 mm-equivalent {f35:g} mm"
+            else:
+                focal, label = float(self.fpx.get()), "entered in pixels"
+            if dist <= 0 or not focal or focal <= 0 or unc < 0:
+                raise ValueError
+        except (ValueError, TypeError):
+            messagebox.showerror("Camera distance", "Enter a positive distance and a valid "
+                                 "focal length.", parent=self)
+            return
+        self.result = {"distance_mm": dist, "uncert_mm": unc, "focal_px": focal,
+                       "source": label}
+        self.destroy()
+
+
+class AutoDetectDialog(_Modal):
+    """Tick the detected rings to add as measurements."""
+
+    def __init__(self, parent, rings, describe: Callable[[float], str],
+                 on_highlight: Callable[[list[int]], None]) -> None:
+        super().__init__(parent, "Detected rings")
+        self.resizable(False, True)
+        self._on_highlight = on_highlight
+        ttk.Label(self.body, wraplength=480, justify="left", text=(
+            "These circular boundaries passed the robust edge fit. Tick the ones to measure. "
+            "Rings with the same part number share a centre. Highlighted rings are shown in "
+            "the preview. Nothing is measured until you add them.")).grid(
+            row=0, column=0, columnspan=6, sticky="w", pady=(0, 8))
+        for c, text in enumerate(("", "#", "Diameter", "Part", "Quality", "Edge")):
+            ttk.Label(self.body, text=text, font=("Segoe UI", 9, "bold")).grid(
+                row=1, column=c, sticky="w", padx=4)
+        self.vars = []
+        for i, ring in enumerate(rings):
+            var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(self.body, variable=var,
+                            command=self._changed).grid(row=i + 2, column=0, padx=4)
+            for c, text in enumerate((str(i + 1), describe(ring.diameter), str(ring.group),
+                                      f"{ring.score:.0f}/100", ring.polarity), start=1):
+                ttk.Label(self.body, text=text).grid(row=i + 2, column=c, sticky="w", padx=4)
+            self.vars.append(var)
+        bar = ttk.Frame(self.body)
+        bar.grid(row=len(rings) + 2, column=0, columnspan=6, sticky="w", pady=(8, 0))
+        ttk.Button(bar, text="Select all", command=lambda: self._set_all(True)).pack(side="left")
+        ttk.Button(bar, text="Select none", command=lambda: self._set_all(False)).pack(
+            side="left", padx=6)
+        self.buttons("Add selected")
+        self.after(50, self._changed)
+
+    def selected(self) -> list[int]:
+        return [i for i, v in enumerate(self.vars) if v.get()]
+
+    def _set_all(self, value: bool) -> None:
+        for v in self.vars:
+            v.set(value)
+        self._changed()
+
+    def _changed(self) -> None:
+        self._on_highlight(self.selected())
+
+    def ok(self) -> None:
+        if not self.selected():
+            messagebox.showinfo("Detected rings", "Tick at least one ring.", parent=self)
+            return
+        self.result = self.selected()
         self.destroy()
 
 
