@@ -47,11 +47,11 @@ class MeasurementPanel(ttk.Frame):
         lst = ttk.LabelFrame(self, text="Measurements", padding=6)
         lst.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
         self.rowconfigure(1, weight=1)
-        self.tree = ttk.Treeview(lst, columns=("plane", "limits"), height=4)
+        self.tree = ttk.Treeview(lst, columns=("plane", "limits"), height=5)
         self.tree.heading("#0", text="Name")
         self.tree.heading("plane", text="Plane")
         self.tree.heading("limits", text="Limits (mm)")
-        self.tree.column("#0", width=160)
+        self.tree.column("#0", width=200)
         self.tree.column("plane", width=80)
         self.tree.column("limits", width=110)
         self.tree.pack(fill="both", expand=True)
@@ -68,8 +68,8 @@ class MeasurementPanel(ttk.Frame):
 
         ed = ttk.LabelFrame(self, text="Set up measurement", padding=6)
         ed.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-        ed.columnconfigure(1, weight=1)
-        ed.columnconfigure(3, weight=1)
+        ed.columnconfigure(1, weight=1, minsize=70)
+        ed.columnconfigure(3, weight=1, minsize=70)
         self.editor = ed
         self.name_var = tk.StringVar()
         self.plane_var = tk.StringVar(value="default")
@@ -99,25 +99,25 @@ class MeasurementPanel(ttk.Frame):
 
         ttk.Label(ed, text="Inner radius (px)").grid(row=3, column=0, sticky="w")
         ttk.Spinbox(ed, from_=0, to=10000, increment=1, width=8,
-                    textvariable=self.r_in_var).grid(row=3, column=1, sticky="w", padx=(6, 0))
+                    textvariable=self.r_in_var).grid(row=3, column=1, sticky="ew", padx=(6, 0))
         ttk.Label(ed, text="Outer radius (px)").grid(row=3, column=2, sticky="w", padx=(6, 0))
         ttk.Spinbox(ed, from_=0, to=10000, increment=1, width=8,
-                    textvariable=self.r_out_var).grid(row=3, column=3, sticky="w", padx=(6, 0))
+                    textvariable=self.r_out_var).grid(row=3, column=3, sticky="ew", padx=(6, 0))
         ttk.Label(ed, text="Band +/- on pick (px)").grid(row=4, column=0, sticky="w")
         ttk.Spinbox(ed, from_=2, to=500, increment=1, width=8,
-                    textvariable=self.half_var).grid(row=4, column=1, sticky="w", padx=(6, 0))
+                    textvariable=self.half_var).grid(row=4, column=1, sticky="ew", padx=(6, 0))
         ttk.Label(ed, text="Edge polarity").grid(row=4, column=2, sticky="w", padx=(6, 0))
         pol = ttk.Combobox(ed, textvariable=self.pol_var, values=POLARITIES, width=8,
                            state="readonly")
-        pol.grid(row=4, column=3, sticky="w", padx=(6, 0))
+        pol.grid(row=4, column=3, sticky="ew", padx=(6, 0))
         self.pol_help = tk.StringVar(value=POLARITY_HELP["auto"])
         ttk.Label(ed, textvariable=self.pol_help, foreground="#555", wraplength=330).grid(
             row=5, column=0, columnspan=4, sticky="w")
         ttk.Label(ed, text="Min (mm)").grid(row=6, column=0, sticky="w")
-        ttk.Entry(ed, textvariable=self.min_var, width=10).grid(row=6, column=1, sticky="w",
+        ttk.Entry(ed, textvariable=self.min_var, width=10).grid(row=6, column=1, sticky="ew",
                                                                 padx=(6, 0))
         ttk.Label(ed, text="Max (mm)").grid(row=6, column=2, sticky="w", padx=(6, 0))
-        ttk.Entry(ed, textvariable=self.max_var, width=10).grid(row=6, column=3, sticky="w",
+        ttk.Entry(ed, textvariable=self.max_var, width=10).grid(row=6, column=3, sticky="ew",
                                                                 padx=(6, 0))
 
         act = ttk.Frame(ed)

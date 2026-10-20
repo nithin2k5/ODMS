@@ -100,6 +100,8 @@ class MainWindow:
         self._build_menu()
         self._build_toolbar()
 
+        status = ttk.Frame(root, padding=(6, 2))
+        status.pack(fill="x", side="bottom")
         main = ttk.PanedWindow(root, orient="horizontal")
         main.pack(fill="both", expand=True)
         left = ttk.PanedWindow(main, orient="vertical")
@@ -109,7 +111,7 @@ class MainWindow:
         self.results_panel = ResultsPanel(left, self.save_result, self.export_csv)
         left.add(self.results_panel, weight=1)
 
-        right = ttk.Notebook(main, width=380)
+        right = ttk.Notebook(main, width=440)
         main.add(right, weight=0)
         self.measure_panel = MeasurementPanel(right, self)
         self.cal_panel = CalibrationPanel(right, self)
@@ -118,13 +120,14 @@ class MainWindow:
         right.add(self.cal_panel, text="Calibration")
         right.add(self.proc_panel, text="Processing")
 
-        status = ttk.Frame(root, padding=(6, 2))
-        status.pack(fill="x", side="bottom")
         self.status_var = tk.StringVar(value="Ready. Start a camera or load an image.")
         ttk.Label(status, textvariable=self.status_var, anchor="w").pack(side="left", fill="x",
                                                                         expand=True)
         self.coord_var = tk.StringVar()
-        ttk.Label(status, textvariable=self.coord_var, width=26, anchor="e").pack(side="right")
+        ttk.Label(status, textvariable=self.coord_var, width=30, anchor="e").pack(side="right")
+        ttk.Label(status, textvariable=self.fps_var, anchor="e").pack(side="right", padx=8)
+        ttk.Label(status, textvariable=self.cam_status_var, anchor="e").pack(side="right",
+                                                                              padx=8)
 
         c = self.canvas
         c.on_press = self._on_press
@@ -174,6 +177,8 @@ class MainWindow:
         self.root.config(menu=m)
 
     def _build_toolbar(self) -> None:
+        self.fps_var = tk.StringVar(value="Processing: - fps")
+        self.cam_status_var = tk.StringVar(value="Camera: stopped")
         bar = ttk.Frame(self.root, padding=(6, 4))
         bar.pack(fill="x")
         ttk.Label(bar, text="Camera").pack(side="left")
@@ -198,11 +203,6 @@ class MainWindow:
                                                                                     padx=2)
         ttk.Button(bar, text="Fit", width=4, command=lambda: self.canvas.reset_view()).pack(
             side="left", padx=(8, 2))
-        self.fps_var = tk.StringVar(value="Processing: - fps")
-        ttk.Label(bar, textvariable=self.fps_var, width=30, anchor="e").pack(side="right")
-        self.cam_status_var = tk.StringVar(value="Camera: stopped")
-        self.cam_status_label = ttk.Label(bar, textvariable=self.cam_status_var, anchor="e")
-        self.cam_status_label.pack(side="right", padx=10)
 
     def _show_help(self) -> None:
         messagebox.showinfo("Controls", (
