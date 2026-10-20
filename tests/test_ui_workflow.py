@@ -11,8 +11,21 @@ import pytest
 tk = pytest.importorskip("tkinter")
 
 
+@pytest.fixture(scope="module")
+def tk_root():
+    # One Tcl interpreter per process: re-creating tk.Tk() after destroying
+    # one can fail on Windows ("invalid command name tcl_findLibrary").
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        pytest.skip(f"no display ({exc})")
+    root.withdraw()
+    yield root
+    root.destroy()
+
+
 @pytest.fixture()
-def app(tmp_path, monkeypatch):
+def app(tk_root, tmp_path, monkeypatch):
     monkeypatch.setenv("ODMS_DATA_DIR", str(tmp_path / "data"))
     import odms.paths
     importlib.reload(odms.paths)
@@ -23,11 +36,7 @@ def app(tmp_path, monkeypatch):
     for name in ("showinfo", "showerror", "showwarning"):
         monkeypatch.setattr(messagebox, name, lambda *a, **k: None)
     monkeypatch.setattr(simpledialog, "askfloat", lambda *a, **k: 100.0)
-    try:
-        root = tk.Tk()
-    except tk.TclError:
-        pytest.skip("no display")
-    window = mw.MainWindow(root)
+    window = mw.MainWindow(tk.Toplevel(tk_root))
     yield window
     window.on_close()
 
@@ -75,6 +84,25 @@ def test_image_mode_workflow(app, tmp_path):
     results = wait_current(app).results
     assert results[0].diameter_mm == pytest.approx(90.0, abs=0.1)
     assert results[1].diameter_mm == pytest.approx(50.0, abs=0.1)
+
+    # Display unit: limits typed in cm are stored in mm; results shown in cm.
+    app.set_unit("cm")
+    assert app.results_panel.tree.heading("diameter")["text"] == "Diameter (cm)"
+    app.edit_measurement(app.profile.specs[0].uid)
+    app.measure_panel.min_var.set("8.99")
+    app.measure_panel.max_var.set("9.01")
+    app._apply_draft_fields()
+    wait_current(app)
+    app.confirm_draft()
+    spec = app.profile.specs[0]
+    assert (spec.min_mm, spec.max_mm) == (pytest.approx(89.9), pytest.approx(90.1))
+    assert wait_current(app).results[0].status.value == "PASS"
+    app._poll_results()
+    tree = app.results_panel.tree
+    rows = {tree.set(i, "measurement"): tree.set(i, "diameter") for i in tree.get_children()}
+    assert float(rows["Flange outer diameter"]) == pytest.approx(9.0, abs=0.01)
+    assert float(rows["Recess diameter"]) == pytest.approx(5.0, abs=0.01)
+    app.set_unit("mm")
 
     app.mark_setup_changed()
     assert all(r.diameter_mm is None for r in wait_current(app).results)
