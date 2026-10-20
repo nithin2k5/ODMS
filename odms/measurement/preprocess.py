@@ -33,9 +33,9 @@ def enhance(gray: np.ndarray, params: ProcessingParams) -> np.ndarray:
 def annulus_mask(shape: tuple[int, int], center: tuple[float, float],
                  r_inner: float, r_outer: float) -> np.ndarray:
     h, w = shape[:2]
-    yy, xx = np.mgrid[0:h, 0:w]
-    d = np.hypot(xx - center[0], yy - center[1])
-    return (d >= r_inner) & (d <= r_outer)
+    yy, xx = np.ogrid[0:h, 0:w]
+    d2 = (xx - center[0]) ** 2 + (yy - center[1]) ** 2
+    return (d2 >= r_inner * r_inner) & (d2 <= r_outer * r_outer)
 
 
 def saturation_fraction(gray: np.ndarray, mask: np.ndarray, level: int = 250) -> float:

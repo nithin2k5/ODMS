@@ -119,35 +119,38 @@ def ransac_circle(points: np.ndarray, threshold: float = 1.5,
     local = pts - origin
     exp_c = None if expected_center is None else np.asarray(expected_center) - origin
 
-    idx = np.empty((max_iterations, 3), dtype=np.int64)
-    for k in range(max_iterations):
-        idx[k] = rng.choice(n, size=3, replace=False)
-    ux, uy, rr, valid = _circles_through_triples(local[idx[:, 0]], local[idx[:, 1]],
-                                                 local[idx[:, 2]])
-    if radius_range is not None:
-        valid &= (rr >= radius_range[0]) & (rr <= radius_range[1])
-    if exp_c is not None and max_center_offset is not None:
-        valid &= np.hypot(ux - exp_c[0], uy - exp_c[1]) <= max_center_offset
-    if not np.any(valid):
-        return None
-    ux, uy, rr = ux[valid], uy[valid], rr[valid]
-
     best_count, best_cost, best = -1, math.inf, None
-    # Evaluate hypotheses in chunks to bound memory use.
-    chunk = 256
-    for start in range(0, len(ux), chunk):
-        hx = ux[start:start + chunk, None]
-        hy = uy[start:start + chunk, None]
-        hr = rr[start:start + chunk, None]
+    chunk = 64
+    needed = max_iterations
+    done = 0
+    while done < min(needed, max_iterations):
+        k = min(chunk, max_iterations - done)
+        idx = rng.integers(0, n, size=(k, 3))
+        done += k
+        ux, uy, rr, valid = _circles_through_triples(local[idx[:, 0]], local[idx[:, 1]],
+                                                     local[idx[:, 2]])
+        valid &= (idx[:, 0] != idx[:, 1]) & (idx[:, 1] != idx[:, 2]) & (idx[:, 0] != idx[:, 2])
+        if radius_range is not None:
+            valid &= (rr >= radius_range[0]) & (rr <= radius_range[1])
+        if exp_c is not None and max_center_offset is not None:
+            valid &= np.hypot(ux - exp_c[0], uy - exp_c[1]) <= max_center_offset
+        if not np.any(valid):
+            continue
+        hx, hy, hr = ux[valid, None], uy[valid, None], rr[valid, None]
         res = np.abs(np.hypot(local[None, :, 0] - hx, local[None, :, 1] - hy) - hr)
-        inl = res < threshold
-        counts = inl.sum(axis=1)
-        # MSAC-style cost for tie breaking.
+        counts = (res < threshold).sum(axis=1)
+        # MSAC-style cost breaks ties between equal inlier counts.
         costs = np.minimum(res, threshold).sum(axis=1)
-        for j in np.flatnonzero(counts >= max(best_count, 1)):
-            if counts[j] > best_count or (counts[j] == best_count and costs[j] < best_cost):
-                best_count, best_cost = int(counts[j]), float(costs[j])
-                best = (float(hx[j, 0]), float(hy[j, 0]), float(hr[j, 0]))
+        j = int(np.argmax(counts - costs / (threshold * n + 1.0)))
+        if counts[j] > best_count or (counts[j] == best_count and costs[j] < best_cost):
+            best_count, best_cost = int(counts[j]), float(costs[j])
+            best = (float(hx[j, 0]), float(hy[j, 0]), float(hr[j, 0]))
+            # Adaptive termination: enough samples for 99.9 % confidence.
+            w = best_count / n
+            if w > 0:
+                p_good = max(w ** 3, 1e-12)
+                needed = int(math.ceil(math.log(1 - 0.999) / math.log(max(1 - p_good, 1e-12))))
+                needed = max(needed, 2 * chunk)
     if best is None or best_count < 5:
         return None
 

@@ -11,7 +11,7 @@ import numpy as np
 from ..calibration.lens import Undistorter
 from ..calibration.models import CalibrationSet, CalState
 from ..calibration.perspective import rectify_window
-from ..geometry import apply_homography, circle_points, point_in_rect
+from ..geometry import apply_homography, circle_points
 from .measure import measure_circle
 from .models import MeasurementSpec, SpecResult, Status
 from .overlay import draw_results
@@ -172,7 +172,9 @@ class MeasurementEngine:
 
         def roi_filter(points_window: np.ndarray) -> np.ndarray:
             pv = to_view(points_window + offset)
-            return np.array([point_in_rect(x, y, roi) for x, y in pv], dtype=bool)
+            rx, ry, rw, rh = roi
+            return ((pv[:, 0] >= rx) & (pv[:, 0] <= rx + rw)
+                    & (pv[:, 1] >= ry) & (pv[:, 1] <= ry + rh))
 
         locked = spec.locked_radius if spec.locked_space == space else None
         outcome = measure_circle(window, (c[0] - x0, c[1] - y0), r_in, r_out, spec.params,

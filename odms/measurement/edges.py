@@ -87,53 +87,54 @@ def extract_radial_edges(image: np.ndarray, center: tuple[float, float],
     score = np.where(ok, score, -np.inf)
     rays_valid = int(np.count_nonzero(ok.any(axis=1)))
 
-    pts, ray_ids, strengths, widths, signs = [], [], [], [], []
+    n_r = len(radii)
+    cols = np.arange(n_r)
+    rows = np.arange(n_rays)
     suppress = max(2, int(round(2.0 / radial_step)))
     work = score.copy()
+    pts, ray_ids, strengths, widths, signs = [], [], [], [], []
     for _ in range(max(1, candidates_per_ray)):
         idx = np.argmax(work, axis=1)
-        rows = np.arange(n_rays)
         peak = work[rows, idx]
-        keep = np.isfinite(peak) & (peak >= min_strength)
         # Peaks on the very edge of the band are unreliable (could be a
         # stronger edge just outside the band).
-        keep &= (idx > 0) & (idx < len(radii) - 1)
-        for ray in np.flatnonzero(keep):
-            i = idx[ray]
-            s = score[ray]
-            y0, y1, y2 = s[i - 1], s[i], s[i + 1]
+        keep = np.isfinite(peak) & (peak >= min_strength) & (idx > 0) & (idx < n_r - 1)
+        if keep.any():
+            ray = rows[keep]
+            i = idx[keep]
+            y0, y1, y2 = score[ray, i - 1], score[ray, i], score[ray, i + 1]
             denom = y0 - 2 * y1 + y2
-            offset = 0.0
-            if np.isfinite(denom) and abs(denom) > 1e-9:
-                offset = float(np.clip(0.5 * (y0 - y2) / denom, -0.5, 0.5))
+            with np.errstate(invalid="ignore", divide="ignore"):
+                offset = np.where(np.isfinite(denom) & (np.abs(denom) > 1e-9),
+                                  0.5 * (y0 - y2) / denom, 0.0)
+            offset = np.clip(np.nan_to_num(offset), -0.5, 0.5)
             r = radii[i] + offset * radial_step
-            pts.append((center[0] + cos_a[ray] * r, center[1] + sin_a[ray] * r))
+            pts.append(np.column_stack([center[0] + cos_a[ray] * r,
+                                        center[1] + sin_a[ray] * r]))
             ray_ids.append(ray)
-            strengths.append(float(y1))
-            widths.append(_peak_width(s, i, radial_step))
-            signs.append(1 if deriv[ray, i] > 0 else -1)
-        lo = np.clip(idx - suppress, 0, None)
-        hi = np.clip(idx + suppress + 1, None, len(radii))
-        for ray in range(n_rays):
-            work[ray, lo[ray]:hi[ray]] = -np.inf
+            strengths.append(y1)
+            widths.append(_peak_widths(score[ray], i, radial_step))
+            signs.append(np.where(deriv[ray, i] > 0, 1, -1))
+        lo = (idx - suppress)[:, None]
+        hi = (idx + suppress)[:, None]
+        work[(cols[None, :] >= lo) & (cols[None, :] <= hi)] = -np.inf
 
     if not pts:
         e = EdgeSamples.empty(n_rays)
         e.rays_valid = rays_valid
         return e
-    return EdgeSamples(np.asarray(pts, dtype=np.float64), np.asarray(ray_ids, dtype=int),
-                       np.asarray(strengths), np.asarray(widths),
-                       np.asarray(signs, dtype=int), n_rays, rays_valid)
+    return EdgeSamples(np.vstack(pts).astype(np.float64), np.concatenate(ray_ids).astype(int),
+                       np.concatenate(strengths), np.concatenate(widths),
+                       np.concatenate(signs).astype(int), n_rays, rays_valid)
 
 
-def _peak_width(score_row: np.ndarray, i: int, step: float) -> float:
-    """Full width at half maximum of the derivative peak at index ``i``."""
-    half = score_row[i] / 2.0
-    left = i
-    while left > 0 and np.isfinite(score_row[left - 1]) and score_row[left - 1] > half:
-        left -= 1
-    right = i
-    n = len(score_row)
-    while right < n - 1 and np.isfinite(score_row[right + 1]) and score_row[right + 1] > half:
-        right += 1
-    return float((right - left + 1) * step)
+def _peak_widths(score_rows: np.ndarray, peak_idx: np.ndarray, step: float) -> np.ndarray:
+    """Full width at half maximum of each row's derivative peak."""
+    n = score_rows.shape[1]
+    cols = np.arange(n)[None, :]
+    half = score_rows[np.arange(len(peak_idx)), peak_idx][:, None] / 2.0
+    below = ~(score_rows > half)          # includes -inf (invalid) samples
+    i = peak_idx[:, None]
+    left = np.where(below & (cols < i), cols, -1).max(axis=1) + 1
+    right = np.where(below & (cols > i), cols, n).min(axis=1) - 1
+    return (right - left + 1) * step
