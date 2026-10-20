@@ -117,6 +117,7 @@ class Status(str, Enum):
     CALIBRATION_REQUIRED = "Calibration required"
     REVALIDATION_REQUIRED = "Revalidation required"
     CALIBRATION_INVALID = "Calibration invalid"
+    REFERENCE_FAILED = "Reference check failed"
     NOT_DETECTED = "Not detected"
     REJECTED = "Rejected"
     INCOMPLETE = "Setup incomplete"
@@ -162,6 +163,9 @@ class SpecResult:
     min_mm: float | None = None
     max_mm: float | None = None
     is_draft: bool = False
+    is_reference: bool = False
+    px_per_mm: float | None = None      # scale actually used for diameter_mm
+    reference_note: str = ""            # live scale-reference status for this plane
     # Geometry in view coordinates for drawing.
     center_view: tuple[float, float] | None = None
     outline_view: np.ndarray | None = None

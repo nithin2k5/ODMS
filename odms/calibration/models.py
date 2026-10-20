@@ -32,6 +32,7 @@ class CalState(str, Enum):
     REVALIDATE = "revalidation required"
     INVALID = "invalid"
     MISSING = "missing"
+    REFERENCE_FAILED = "reference check failed"
 
 
 @dataclass
@@ -115,6 +116,8 @@ class PlaneCalibration:
     output_transform: list[list[float]] | None = None
     output_size: tuple[int, int] | None = None
     reprojection_rms_mm: float | None = None
+    # Optional scale reference measured in every frame (ScaleReference dict)
+    reference: dict[str, Any] | None = None
     # Validity tracking
     requires_revalidation: bool = False
     last_validated: str | None = None
