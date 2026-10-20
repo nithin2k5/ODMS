@@ -28,6 +28,7 @@ ODMS/
 ├── odms/
 │   ├── app.py, __main__.py      entry point (python -m odms)
 │   ├── paths.py                 data locations (override with ODMS_DATA_DIR)
+│   ├── units.py                 display/entry units (internal unit is mm)
 │   ├── geometry.py              preview<->image mapping, homography helpers
 │   ├── processing.py            background measurement worker thread
 │   ├── synthetic.py             synthetic parts with exact ground truth
@@ -271,6 +272,21 @@ in shows the true sub-pixel fit.
   RMS, inlier ratio, angular coverage, largest gap, edge width, smoothing
   count, measurement space, calibration ID, plane calibration ID, calibration
   state, px/mm, lens applied, camera ID, resolution, and image paths.
+
+## Units
+
+The **Unit** selector on the toolbar switches between `mm`, `cm`, `m`, `um`
+(micrometres), `in` and `mil` (thousandths of an inch). It applies to
+everything shown or typed in: overlay labels, the results table, measurement
+limits, and the lengths and coordinates entered during calibration and
+revalidation. The unit is saved with the part profile.
+
+Internally, ODMS always calculates and stores in millimetres: calibrations
+(px/mm), limits in profiles, and the `diameter_mm`, `min_mm` and `max_mm` CSV
+columns. Changing the unit never changes a measurement or a calibration. The
+CSV also has `display_unit`, `diameter_display`, `min_display` and
+`max_display` columns in the selected unit. The validation tool's
+`reference_mm` column is in millimetres.
 
 ## Processing pipeline
 
