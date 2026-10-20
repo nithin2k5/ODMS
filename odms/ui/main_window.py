@@ -15,6 +15,7 @@ from .. import paths
 from ..calibration.lens import find_checkerboard
 from ..calibration.models import CalibrationSet, CalState, LensCalibration
 from ..calibration.perspective import checkerboard_world_points, make_perspective_plane
+from ..calibration.reference import ScaleReference
 from ..calibration.scale import click_sensitivity, make_scale_plane, revalidate_plane
 from ..calibration.store import load_calibration, save_calibration
 from ..camera.source import (BACKENDS, RESOLUTIONS, CameraState, CameraWorker,
@@ -29,10 +30,12 @@ from ..storage.profiles import PartProfile, load_profile, save_profile
 from ..storage.results import ResultStore, imread, result_row
 from ..units import UNIT_NAMES, check_unit, format_length, to_mm
 from .calibration_panel import CalibrationPanel
-from .dialogs import FormDialog, LensCalibrationDialog, PerspectivePointsDialog, run_in_background
+from .dialogs import (FormDialog, LensCalibrationDialog, PerspectivePointsDialog,
+                      ReferenceDialog, run_in_background)
 from .measurement_panel import MeasurementPanel, ProcessingPanel
 from .preview import PreviewCanvas
 from .results_panel import ResultsPanel
+from .widgets import ScrollFrame
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +50,7 @@ MODE_HINTS = {
     "scale_ref": "Click both ends of the reference of known length. Zoom in for precision.",
     "persp": "Click 4+ reference points on the measured plane, then press 'Finish points'.",
     "revalidate": "Click both ends of a known reference lying on the plane to revalidate.",
+    "ref_edge": "Click on the edge of the reference circle (known diameter) on the plane.",
 }
 
 
@@ -115,12 +119,19 @@ class MainWindow:
 
         right = ttk.Notebook(main, width=440)
         main.add(right, weight=0)
-        self.measure_panel = MeasurementPanel(right, self)
-        self.cal_panel = CalibrationPanel(right, self)
-        self.proc_panel = ProcessingPanel(right, self)
-        right.add(self.measure_panel, text="Measurements")
-        right.add(self.cal_panel, text="Calibration")
-        right.add(self.proc_panel, text="Processing")
+        # Side tabs scroll, so every control stays reachable on small screens.
+        tabs = {}
+        for key, title in (("measure", "Measurements"), ("cal", "Calibration"),
+                           ("proc", "Processing")):
+            tabs[key] = ScrollFrame(right)
+            right.add(tabs[key], text=title)
+        self.measure_panel = MeasurementPanel(tabs["measure"].inner, self)
+        self.cal_panel = CalibrationPanel(tabs["cal"].inner, self)
+        self.proc_panel = ProcessingPanel(tabs["proc"].inner, self)
+        for panel in (self.measure_panel, self.cal_panel, self.proc_panel):
+            panel.pack(fill="both", expand=True)
+        self.notebook = right
+        self.cal_tab = tabs["cal"]
 
         self.status_var = tk.StringVar(value="Ready. Start a camera or load an image.")
         ttk.Label(status, textvariable=self.status_var, anchor="w").pack(side="left", fill="x",
@@ -270,7 +281,8 @@ class MainWindow:
     def _refresh_calibration_panel(self) -> None:
         res = self.latest.resolution if self.latest else None
         lens = self.latest.lens_applied if self.latest else False
-        self.cal_panel.refresh(self.calibration, self.source_id, res, lens)
+        refs = self.latest.references if self.latest else None
+        self.cal_panel.refresh(self.calibration, self.source_id, res, lens, refs)
 
     # ================================================================== polling
     def _poll_results(self) -> None:
@@ -475,6 +487,9 @@ class MainWindow:
         elif self.mode == "edge":
             self.end_mode()
             self.pick_edge(x, y)
+        elif self.mode == "ref_edge":
+            self.end_mode()
+            self._finish_reference(x, y)
         elif self.mode in ("scale_ref", "revalidate"):
             self.mode_points.append((x, y))
             if len(self.mode_points) == 2:
@@ -639,31 +654,10 @@ class MainWindow:
         draft = self.draft
         self.measure_panel.read_into(draft)
         half = self.measure_panel.band_half_width
-        view = self.latest.view
-        plane = self._perspective_plane_for(draft.plane)
         self.set_status("Searching for the ring through the clicked point...")
         self.root.update_idletasks()
-
-        ring_view = None   # (center, r_inner, r_outer) in view coordinates
-        if plane is not None and plane.output_size and \
-                plane.output_size[0] * plane.output_size[1] < 30e6:
-            # Find the ring on the rectified plane, where it is a true circle.
-            T = plane.T
-            rect = cv2.warpPerspective(view, T, tuple(int(v) for v in plane.output_size))
-            click_r = tuple(apply_homography(T, np.array([[x, y]]))[0])
-            hint_r = (tuple(apply_homography(T, np.array([draft.center]))[0])
-                      if draft.center else None)
-            ring = select_ring(rect, click_r, center_hint=hint_r)
-            if ring is not None:
-                T_inv = np.linalg.inv(T)
-                c_view = tuple(apply_homography(T_inv, np.array([ring[:2]]))[0])
-                pts = apply_homography(T_inv, circle_points(ring[0], ring[1], ring[2], 180))
-                d = np.hypot(*(pts - np.array(c_view)).T)
-                ring_view = (c_view, max(d.min() - half, 0.0), d.max() + half)
-        else:
-            ring = select_ring(view, (x, y), roi=draft.roi, center_hint=draft.center)
-            if ring is not None:
-                ring_view = ((ring[0], ring[1]), max(ring[2] - half, 0.0), ring[2] + half)
+        found = self._locate_ring(x, y, draft.plane, draft.roi, draft.center, half)
+        ring_view = found[0] if found else None
 
         if ring_view is None:
             center = draft.center
@@ -685,6 +679,31 @@ class MainWindow:
         draft.center, draft.r_inner, draft.r_outer = ring_view
         draft.locked_radius = draft.locked_space = None
         self._draft_geometry_changed()
+
+    def _locate_ring(self, x: float, y: float, plane_name: str, roi, hint, half: float):
+        """Ring through the click: ((centre, r_inner, r_outer) in view px,
+        fitted radius in measurement-space px), or None."""
+        view = self.latest.view
+        plane = self._perspective_plane_for(plane_name)
+        if plane is not None and plane.output_size and \
+                plane.output_size[0] * plane.output_size[1] < 30e6:
+            # Find the ring on the rectified plane, where it is a true circle.
+            T = plane.T
+            rect = cv2.warpPerspective(view, T, tuple(int(v) for v in plane.output_size))
+            click_r = tuple(apply_homography(T, np.array([[x, y]]))[0])
+            hint_r = tuple(apply_homography(T, np.array([hint]))[0]) if hint else None
+            ring = select_ring(rect, click_r, center_hint=hint_r)
+            if ring is None:
+                return None
+            T_inv = np.linalg.inv(T)
+            c_view = tuple(apply_homography(T_inv, np.array([ring[:2]]))[0])
+            pts = apply_homography(T_inv, circle_points(ring[0], ring[1], ring[2], 180))
+            d = np.hypot(*(pts - np.array(c_view)).T)
+            return (c_view, max(d.min() - half, 0.0), d.max() + half), ring[2]
+        ring = select_ring(view, (x, y), roi=roi, center_hint=hint)
+        if ring is None:
+            return None
+        return ((ring[0], ring[1]), max(ring[2] - half, 0.0), ring[2] + half), ring[2]
 
     def _current_draft_result(self) -> SpecResult | None:
         if self.latest is None or self.latest.config_version != self._version:
@@ -1071,6 +1090,93 @@ class MainWindow:
             messagebox.showwarning("Revalidation failed", text + "\n\nThe setup has changed. "
                                    "Recalibrate this plane.", parent=self.root)
         self.set_status(("Revalidation passed: " if passed else "Revalidation FAILED: ") + text)
+
+    def start_reference(self) -> None:
+        cal = self._ensure_calset()
+        if cal is None:
+            return
+        name = self.cal_panel.target_plane
+        if name in cal.planes:
+            state, why = cal.plane_state(name, self.source_id, self.latest.resolution)
+            if state is CalState.INVALID:
+                messagebox.showerror("Scale reference", f"Plane '{name}' is invalid ({why}). "
+                                     "Recalibrate it first.", parent=self.root)
+                return
+        self.begin_mode("ref_edge")
+
+    def _finish_reference(self, x: float, y: float) -> None:
+        cal = self._ensure_calset()
+        if cal is None:
+            return
+        name = self.cal_panel.target_plane
+        plane = cal.planes.get(name)
+        perspective = plane is not None and plane.mode == "perspective"
+        half = max(8.0, self.measure_panel.band_half_width)
+        self.set_status("Fitting the reference circle...")
+        self.root.update_idletasks()
+        found = self._locate_ring(x, y, name, None, None, half)
+        if found is None:
+            messagebox.showerror("Scale reference", "No circle was found through that point. "
+                                 "Zoom in and click exactly on the reference edge.",
+                                 parent=self.root)
+            self.set_status("Scale reference not defined.")
+            return
+        (center, r_in, r_out), r_meas = found
+        existing = ScaleReference.from_dict(plane.reference) if plane else None
+        initial = None
+        if existing is not None:
+            initial = {"diameter": format_length(existing.diameter_mm, self.unit, False),
+                       "mode": existing.mode, "tolerance": f"{existing.tolerance * 100:g}",
+                       "max_drift": f"{existing.max_drift * 100:g}"}
+        form = ReferenceDialog(self.root, self.unit, name, plane is not None, perspective,
+                               2 * r_meas, initial).show()
+        if not form:
+            self.set_status("Scale reference not defined.")
+            return
+        d_mm = form["diameter_mm"]
+        if form["calibrate"]:
+            p1, p2 = (center[0] - r_meas, center[1]), (center[0] + r_meas, center[1])
+            try:
+                new_plane = make_scale_plane(name, p1, p2, d_mm, self._lens_id(cal),
+                                             self.cal_panel.setup_info())
+            except ValueError as exc:
+                messagebox.showerror("Scale reference", str(exc), parent=self.root)
+                return
+            if plane is not None and not self._confirm_overwrite_plane(cal, name):
+                return
+            plane = cal.planes[name] = new_plane
+        else:
+            dev = 2 * r_meas / (d_mm * plane.px_per_mm) - 1.0
+            limit = form["tolerance"] if form["mode"] == "check" else form["max_drift"]
+            if abs(dev) > limit and not messagebox.askyesno(
+                    "Scale reference",
+                    f"The reference currently measures {dev:+.2%} away from the plane "
+                    f"calibration (limit {limit:.2%}). Either the diameter entered is wrong or "
+                    "the setup changed since calibration.\n\nUse it anyway? Millimetres on "
+                    "this plane stay blocked until the difference is resolved.",
+                    parent=self.root):
+                return
+        spec = MeasurementSpec(name="Scale reference", plane=name, center=center,
+                               r_inner=r_in, r_outer=r_out)
+        spec.params.polarity = "any"
+        plane.reference = ScaleReference(spec=spec.to_dict(), diameter_mm=d_mm,
+                                         mode=form["mode"], tolerance=form["tolerance"],
+                                         max_drift=form["max_drift"]).to_dict()
+        self._calibration_changed()
+        self.set_status(f"Scale reference ({format_length(d_mm, self.unit)}, {form['mode']} "
+                        f"mode) defined for plane '{name}'. It is measured in every frame.")
+
+    def remove_reference(self) -> None:
+        cal = self.calibration
+        name = self.cal_panel.selected_plane() or self.cal_panel.target_plane
+        if cal is None or name not in cal.planes or not cal.planes[name].reference:
+            messagebox.showinfo("Scale reference", "The selected plane has no scale reference.",
+                                parent=self.root)
+            return
+        if messagebox.askyesno("Scale reference", f"Remove the scale reference of plane "
+                               f"'{name}'?", parent=self.root):
+            cal.planes[name].reference = None
+            self._calibration_changed()
 
     def mark_setup_changed(self) -> None:
         cal = self.calibration
